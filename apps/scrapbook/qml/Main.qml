@@ -149,6 +149,20 @@ ApplicationWindow {
         }
     }
 
+    component AppMenu: Menu {
+        id: control
+        popupType: Popup.Window
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside | Popup.CloseOnPressOutsideParent
+        delegate: DarkMenuItem {}
+
+        background: Rectangle {
+            radius: 14
+            color: panel
+            border.color: edge
+            border.width: 1
+        }
+    }
+
     component DarkMenuItem: MenuItem {
         id: menuItem
         implicitWidth: 220
@@ -167,6 +181,33 @@ ApplicationWindow {
         background: Rectangle {
             radius: 10
             color: menuItem.highlighted ? "#262626" : "transparent"
+        }
+    }
+
+    component AppMenuBarItem: MenuBarItem {
+        id: control
+        implicitWidth: contentItem.implicitWidth + 24
+        implicitHeight: 32
+        leftPadding: 12
+        rightPadding: 12
+        topPadding: 0
+        bottomPadding: 0
+        hoverEnabled: true
+
+        contentItem: Text {
+            text: control.text
+            color: textPrimary
+            font.family: bodyFont
+            font.pixelSize: 13
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
+        }
+
+        background: Rectangle {
+            radius: 6
+            color: control.highlighted ? "#202020" : "transparent"
+            border.color: control.highlighted ? edgeStrong : "transparent"
+            border.width: 1
         }
     }
 
@@ -718,13 +759,6 @@ ApplicationWindow {
     }
 
     Action {
-        id: openReviewWorkspaceAction
-        text: "Open review workspace"
-        enabled: pipelineController.reviewGroupModel.count > 0
-        onTriggered: activePageIndex = 1
-    }
-
-    Action {
         id: saveDecisionAction
         text: "Save decision"
         enabled: pipelineController.hasCurrentGroup
@@ -758,11 +792,11 @@ ApplicationWindow {
 
         Surface {
             Layout.fillWidth: true
-            implicitHeight: 60
+            implicitHeight: 72
 
             RowLayout {
                 anchors.fill: parent
-                anchors.margins: 12
+                anchors.margins: 10
                 spacing: 12
 
                 Text {
@@ -771,123 +805,78 @@ ApplicationWindow {
                     font.family: uiFont
                     font.pixelSize: 18
                     font.weight: Font.DemiBold
+                    Layout.alignment: Qt.AlignVCenter
                 }
 
                 Rectangle {
                     width: 1
                     height: 26
                     color: edge
+                    Layout.alignment: Qt.AlignVCenter
                 }
 
                 Rectangle {
                     Layout.preferredWidth: 720
-                    implicitHeight: 40
+                    Layout.preferredHeight: 40
+                    Layout.alignment: Qt.AlignVCenter
                     radius: 12
                     color: panelRaised
                     border.color: edge
                     border.width: 1
 
-                    RowLayout {
+                    MenuBar {
+                        id: appMenuBar
                         anchors.fill: parent
-                        anchors.margins: 4
+                        anchors.leftMargin: 6
+                        anchors.rightMargin: 6
+                        anchors.topMargin: 4
+                        anchors.bottomMargin: 4
                         spacing: 2
+                        delegate: AppMenuBarItem {}
 
-                        MenuTrigger {
-                            text: "File"
-                            menu: fileMenu
+                        background: Item {}
 
-                            DarkMenu {
-                                id: fileMenu
-                                DarkMenuItem { action: runPipelineAction }
-                                DarkMenuItem { action: refreshGroupsAction }
-                                MenuSeparator {}
-                                DarkMenuItem { action: openLogicalStoreAction }
-                                MenuSeparator {}
-                                DarkMenuItem { action: exitAction }
-                            }
+                        AppMenu {
+                            title: "File"
+                            DarkMenuItem { action: openLogicalStoreAction }
+                            MenuSeparator {}
+                            DarkMenuItem { action: exitAction }
                         }
 
-                        MenuTrigger {
-                            text: "Edit"
-                            menu: editMenu
-
-                            DarkMenu {
-                                id: editMenu
-                                DarkMenuItem { action: clearSelectionAction }
-                                DarkMenuItem { action: mergeSelectionAction }
-                                DarkMenuItem { action: splitSelectionAction }
-                                DarkMenuItem { action: toggleRepresentativeAction }
-                            }
+                        AppMenu {
+                            title: "Edit"
+                            DarkMenuItem { action: clearSelectionAction }
+                            DarkMenuItem { action: mergeSelectionAction }
+                            DarkMenuItem { action: splitSelectionAction }
+                            DarkMenuItem { action: toggleRepresentativeAction }
                         }
 
-                        MenuTrigger {
-                            text: "View"
-                            menu: viewMenu
-
-                            DarkMenu {
-                                id: viewMenu
-                                DarkMenuItem { action: showPipelineWorkspaceAction }
-                                DarkMenuItem { action: showReviewWorkspaceAction }
-                                MenuSeparator {}
-                                DarkMenuItem { action: toggleOutputDockAction }
-                                DarkMenuItem { action: togglePipelineSectionsAction }
-                            }
+                        AppMenu {
+                            title: "View"
+                            DarkMenuItem { action: showPipelineWorkspaceAction }
+                            DarkMenuItem { action: showReviewWorkspaceAction }
+                            MenuSeparator {}
+                            DarkMenuItem { action: toggleOutputDockAction }
+                            DarkMenuItem { action: togglePipelineSectionsAction }
                         }
 
-                        MenuTrigger {
-                            text: "Run"
-                            menu: runMenu
-
-                            DarkMenu {
-                                id: runMenu
-                                DarkMenuItem { action: runPipelineAction }
-                                DarkMenuItem { action: refreshGroupsAction }
-                                DarkMenuItem { action: openReviewWorkspaceAction }
-                            }
+                        AppMenu {
+                            title: "Run"
+                            DarkMenuItem { action: runPipelineAction }
+                            DarkMenuItem { action: refreshGroupsAction }
                         }
 
-                        MenuTrigger {
-                            text: "Review"
-                            menu: reviewMenu
-
-                            DarkMenu {
-                                id: reviewMenu
-                                DarkMenuItem { action: saveDecisionAction }
-                                DarkMenuItem { action: saveAndRerunAction }
-                                DarkMenuItem { action: reloadGroupAction }
-                                MenuSeparator {}
-                                DarkMenuItem { action: mergeSelectionAction }
-                                DarkMenuItem { action: splitSelectionAction }
-                                DarkMenuItem { action: toggleRepresentativeAction }
-                            }
+                        AppMenu {
+                            title: "Review"
+                            DarkMenuItem { action: saveDecisionAction }
+                            DarkMenuItem { action: saveAndRerunAction }
+                            DarkMenuItem { action: reloadGroupAction }
                         }
 
-                        MenuTrigger {
-                            text: "Quick actions"
-                            menu: quickActionsMenu
-
-                            DarkMenu {
-                                id: quickActionsMenu
-                                DarkMenuItem { action: runPipelineAction }
-                                DarkMenuItem { action: refreshGroupsAction }
-                                DarkMenuItem { action: openLogicalStoreAction }
-                                MenuSeparator {}
-                                DarkMenuItem { action: saveDecisionAction }
-                                DarkMenuItem { action: saveAndRerunAction }
-                            }
+                        AppMenu {
+                            title: "Help"
+                            DarkMenuItem { action: aboutAction }
                         }
-
-                        MenuTrigger {
-                            text: "Help"
-                            menu: helpMenu
-
-                            DarkMenu {
-                                id: helpMenu
-                                DarkMenuItem { action: aboutAction }
-                            }
-                        }
-
-                        Item { Layout.fillWidth: true }
                     }
                 }
 
@@ -895,15 +884,19 @@ ApplicationWindow {
 
                 Rectangle {
                     Layout.preferredWidth: 240
-                    Layout.fillHeight: true
-                    radius: 16
+                    Layout.preferredHeight: 44
+                    Layout.alignment: Qt.AlignVCenter
+                    radius: 14
                     color: panelRaised
                     border.color: edge
                     border.width: 1
 
                     RowLayout {
                         anchors.fill: parent
-                        anchors.margins: 14
+                        anchors.leftMargin: 12
+                        anchors.rightMargin: 12
+                        anchors.topMargin: 8
+                        anchors.bottomMargin: 8
                         spacing: 10
 
                         Rectangle {
@@ -926,7 +919,7 @@ ApplicationWindow {
                                 text: pipelineController.status
                                 color: textPrimary
                                 font.family: bodyFont
-                                font.pixelSize: 15
+                                font.pixelSize: 14
                                 font.weight: Font.Medium
                                 elide: Text.ElideRight
                             }
