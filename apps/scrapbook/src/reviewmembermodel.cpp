@@ -1,6 +1,29 @@
 #include "reviewmembermodel.h"
 
+#include <QSet>
 #include <QUrl>
+
+#include <algorithm>
+#include <utility>
+
+namespace {
+
+QList<int> normalizeRows(const QVariantList& rows, int memberCount) {
+  QSet<int> seenRows;
+  QList<int> normalizedRows;
+  for (const QVariant& value : rows) {
+    const int row = value.toInt();
+    if (row < 0 || row >= memberCount || seenRows.contains(row)) {
+      continue;
+    }
+    seenRows.insert(row);
+    normalizedRows.push_back(row);
+  }
+  std::sort(normalizedRows.begin(), normalizedRows.end());
+  return normalizedRows;
+}
+
+}  // namespace
 
 ReviewMemberModel::ReviewMemberModel(QObject* parent)
     : QAbstractListModel(parent) {}
@@ -135,4 +158,97 @@ void ReviewMemberModel::setRepresentative(int row, bool representative) {
     return;
   }
   setData(index(row, 0), representative, RepresentativeRole);
+}
+
+void ReviewMemberModel::mergeRows(const QVariantList& rows) {
+  const QList<int> normalizedRows = normalizeRows(rows, m_members.size());
+  if (normalizedRows.size() < 2) {
+    return;
+  }
+
+  const int targetClusterIndex = m_members.at(normalizedRows.front()).clusterIndex;
+  int representativeRow = -1;
+  for (int row = 0; row < m_members.size(); ++row) {
+    if (m_members.at(row).clusterIndex == targetClusterIndex && m_members.at(row).representative) {
+      representativeRow = row;
+      break;
+    }
+  }
+  if (representativeRow < 0) {
+    for (const int row : normalizedRows) {
+      if (m_members.at(row).representative) {
+        representativeRow = row;
+        break;
+      }
+    }
+  }
+  if (representativeRow < 0) {
+    representativeRow = normalizedRows.front();
+  }
+
+  for (const int row : normalizedRows) {
+    ReviewMemberItem& member = m_members[row];
+    const bool clusterChanged = member.clusterIndex != targetClusterIndex;
+    const bool representativeChanged = member.representative != (row == representativeRow);
+    if (!clusterChanged && !representativeChanged) {
+      continue;
+    }
+    member.clusterIndex = targetClusterIndex;
+    member.representative = (row == representativeRow);
+    emit dataChanged(index(row, 0), index(row, 0), {ClusterIndexRole, RepresentativeRole});
+  }
+}
+
+void ReviewMemberModel::splitRows(const QVariantList& rows) {
+  const QList<int> normalizedRows = normalizeRows(rows, m_members.size());
+  if (normalizedRows.isEmpty()) {
+    return;
+  }
+
+  int nextClusterIndex = 1;
+  for (const ReviewMemberItem& member : std::as_const(m_members)) {
+    nextClusterIndex = std::max(nextClusterIndex, member.clusterIndex + 1);
+  }
+
+  for (const int row : normalizedRows) {
+    ReviewMemberItem& member = m_members[row];
+    member.clusterIndex = nextClusterIndex++;
+    member.representative = true;
+    emit dataChanged(index(row, 0), index(row, 0), {ClusterIndexRole, RepresentativeRole});
+  }
+}
+
+void ReviewMemberModel::chooseRepresentative(int row) {
+  if (row < 0 || row >= m_members.size()) {
+    return;
+  }
+
+  const int clusterIndex = m_members.at(row).clusterIndex;
+  for (int memberRow = 0; memberRow < m_members.size(); ++memberRow) {
+    ReviewMemberItem& member = m_members[memberRow];
+    if (member.clusterIndex != clusterIndex) {
+      continue;
+    }
+    const bool nextRepresentative = memberRow == row;
+    if (member.representative == nextRepresentative) {
+      continue;
+    }
+    member.representative = nextRepresentative;
+    emit dataChanged(index(memberRow, 0), index(memberRow, 0), {RepresentativeRole});
+  }
+}
+
+void ReviewMemberModel::toggleRepresentative(int row) {
+  if (row < 0 || row >= m_members.size()) {
+    return;
+  }
+
+  if (!m_members.at(row).representative) {
+    chooseRepresentative(row);
+    return;
+  }
+
+  ReviewMemberItem& member = m_members[row];
+  member.representative = false;
+  emit dataChanged(index(row, 0), index(row, 0), {RepresentativeRole});
 }

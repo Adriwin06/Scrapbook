@@ -53,6 +53,10 @@ public:
 
   Q_INVOKABLE void setClusterIndex(int row, int clusterIndex);
   Q_INVOKABLE void setRepresentative(int row, bool representative);
+  Q_INVOKABLE void mergeRows(const QVariantList& rows);
+  Q_INVOKABLE void splitRows(const QVariantList& rows);
+  Q_INVOKABLE void chooseRepresentative(int row);
+  Q_INVOKABLE void toggleRepresentative(int row);
 
 signals:
   void countChanged();

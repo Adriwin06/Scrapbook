@@ -1,4 +1,5 @@
 #include <QGuiApplication>
+#include <QTextStream>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQuickStyle>
@@ -14,6 +15,12 @@ int main(int argc, char* argv[]) {
   FixturePipelineController pipelineController;
 
   QQmlApplicationEngine engine;
+  QObject::connect(&engine, &QQmlApplicationEngine::warnings, &app, [](const QList<QQmlError>& warnings) {
+    QTextStream stream(stderr);
+    for (const QQmlError& warning : warnings) {
+      stream << warning.toString() << Qt::endl;
+    }
+  });
   engine.rootContext()->setContextProperty(QStringLiteral("pipelineController"), &pipelineController);
 
   QObject::connect(

@@ -26,6 +26,59 @@ ApplicationWindow {
     readonly property string uiFont: Qt.platform.os === "windows" ? "Segoe UI Variable Display" : "Noto Sans"
     readonly property string bodyFont: Qt.platform.os === "windows" ? "Segoe UI Variable Text" : "Noto Sans"
     readonly property string monoFont: Qt.platform.os === "windows" ? "Cascadia Mono" : "Noto Sans Mono"
+    property int activePageIndex: 0
+    property bool logDockExpanded: true
+    property bool pathsPanelExpanded: true
+    property bool configPanelExpanded: true
+    property bool workspacePanelExpanded: true
+    property var selectedMemberRows: []
+    readonly property bool allPipelinePanelsExpanded: pathsPanelExpanded && configPanelExpanded && workspacePanelExpanded
+
+    function clearMemberSelection() {
+        selectedMemberRows = []
+    }
+
+    function isMemberSelected(row) {
+        return selectedMemberRows.indexOf(row) !== -1
+    }
+
+    function toggleMemberSelection(row) {
+        let nextSelection = selectedMemberRows.slice()
+        const existingIndex = nextSelection.indexOf(row)
+        if (existingIndex >= 0) {
+            nextSelection.splice(existingIndex, 1)
+        } else {
+            nextSelection.push(row)
+            nextSelection.sort(function(left, right) { return left - right })
+        }
+        selectedMemberRows = nextSelection
+    }
+
+    function setPipelinePanelsExpanded(expanded) {
+        pathsPanelExpanded = expanded
+        configPanelExpanded = expanded
+        workspacePanelExpanded = expanded
+    }
+
+    function mergeSelectedMembers() {
+        if (selectedMemberRows.length >= 2) {
+            pipelineController.reviewMemberModel.mergeRows(selectedMemberRows)
+            clearMemberSelection()
+        }
+    }
+
+    function splitSelectedMembers() {
+        if (selectedMemberRows.length >= 1) {
+            pipelineController.reviewMemberModel.splitRows(selectedMemberRows)
+            clearMemberSelection()
+        }
+    }
+
+    function pickSelectedRepresentative() {
+        if (selectedMemberRows.length === 1) {
+            pipelineController.reviewMemberModel.chooseRepresentative(selectedMemberRows[0])
+        }
+    }
 
     component Surface: Rectangle {
         radius: 20
@@ -77,6 +130,109 @@ ApplicationWindow {
             horizontalAlignment: Text.AlignHCenter
             verticalAlignment: Text.AlignVCenter
             elide: Text.ElideRight
+        }
+    }
+
+    component DarkMenu: Menu {
+        id: control
+        x: 0
+        y: parent ? parent.height + 4 : 0
+        popupType: Popup.Window
+        closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutsideParent
+        delegate: DarkMenuItem {}
+
+        background: Rectangle {
+            radius: 14
+            color: panel
+            border.color: edge
+            border.width: 1
+        }
+    }
+
+    component DarkMenuItem: MenuItem {
+        id: menuItem
+        implicitWidth: 220
+        implicitHeight: 36
+        padding: 10
+
+        contentItem: Text {
+            text: menuItem.text
+            color: menuItem.enabled ? textPrimary : textFaint
+            font.family: bodyFont
+            font.pixelSize: 13
+            verticalAlignment: Text.AlignVCenter
+            elide: Text.ElideRight
+        }
+
+        background: Rectangle {
+            radius: 10
+            color: menuItem.highlighted ? "#262626" : "transparent"
+        }
+    }
+
+    component MenuTrigger: Item {
+        id: control
+        property string text: ""
+        property Menu menu
+        implicitWidth: triggerButton.implicitWidth
+        implicitHeight: triggerButton.implicitHeight
+
+        Button {
+            id: triggerButton
+            anchors.fill: parent
+            hoverEnabled: true
+            padding: 10
+
+            background: Rectangle {
+                radius: 10
+                color: control.menu && control.menu.visible
+                    ? "#202020"
+                    : (triggerButton.hovered ? "#1b1b1b" : "transparent")
+                border.color: control.menu && control.menu.visible ? edgeStrong : edge
+                border.width: 1
+            }
+
+            contentItem: Text {
+                text: control.text
+                color: textPrimary
+                font.family: bodyFont
+                font.pixelSize: 13
+                horizontalAlignment: Text.AlignHCenter
+                verticalAlignment: Text.AlignVCenter
+            }
+
+            onClicked: {
+                if (control.menu) {
+                    control.menu.visible = !control.menu.visible
+                }
+            }
+        }
+    }
+
+    component WorkspaceTabButton: TabButton {
+        id: control
+        required property int pageIndex
+        font.family: bodyFont
+        font.pixelSize: 14
+        implicitHeight: 46
+        onClicked: activePageIndex = pageIndex
+
+        background: Item {
+            Rectangle {
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.bottom
+                height: 2
+                color: activePageIndex === control.pageIndex ? "#f2f2f2" : "transparent"
+            }
+        }
+
+        contentItem: Text {
+            text: control.text
+            color: activePageIndex === control.pageIndex ? textPrimary : textMuted
+            font: control.font
+            horizontalAlignment: Text.AlignHCenter
+            verticalAlignment: Text.AlignVCenter
         }
     }
 
@@ -317,6 +473,112 @@ ApplicationWindow {
         }
     }
 
+    component SplitHandle: Rectangle {
+        color: "transparent"
+        implicitWidth: 10
+        implicitHeight: 10
+
+        Rectangle {
+            anchors.centerIn: parent
+            width: parent.width > parent.height ? 48 : 2
+            height: parent.width > parent.height ? 2 : 48
+            radius: 1
+            color: edgeStrong
+            opacity: 0.65
+        }
+    }
+
+    component CollapsiblePanel: Rectangle {
+        id: control
+        property string title: ""
+        property string subtitle: ""
+        property bool expanded: true
+        default property alias content: bodyColumn.data
+
+        radius: 16
+        color: panelRaised
+        border.color: edge
+        border.width: 1
+        implicitHeight: panelColumn.implicitHeight + 32
+
+        ColumnLayout {
+            id: panelColumn
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            anchors.margins: 16
+            spacing: 12
+
+            Item {
+                Layout.fillWidth: true
+                implicitHeight: headerLayout.implicitHeight
+
+                RowLayout {
+                    id: headerLayout
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: 10
+
+                    Text {
+                        text: control.expanded ? "\u25BE" : "\u25B8"
+                        color: textMuted
+                        font.family: bodyFont
+                        font.pixelSize: 14
+                        font.weight: Font.DemiBold
+                    }
+
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 2
+
+                        Text {
+                            Layout.fillWidth: true
+                            text: control.title
+                            color: textPrimary
+                            font.family: bodyFont
+                            font.pixelSize: 15
+                            font.weight: Font.DemiBold
+                            elide: Text.ElideRight
+                        }
+
+                        Text {
+                            Layout.fillWidth: true
+                            visible: control.subtitle.length > 0
+                            text: control.subtitle
+                            color: textFaint
+                            font.family: bodyFont
+                            font.pixelSize: 12
+                            elide: Text.ElideRight
+                        }
+                    }
+                }
+
+                MouseArea {
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: control.expanded = !control.expanded
+                }
+            }
+
+            Item {
+                Layout.fillWidth: true
+                implicitHeight: control.expanded ? bodyColumn.implicitHeight : 0
+                visible: control.expanded
+                clip: true
+
+                ColumnLayout {
+                    id: bodyColumn
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    spacing: 12
+                }
+            }
+        }
+    }
+
     background: Rectangle {
         color: chrome
 
@@ -367,6 +629,128 @@ ApplicationWindow {
         onAccepted: pipelineController.toolPath = selectedFile.toLocalFile()
     }
 
+    Connections {
+        target: pipelineController.reviewMemberModel
+        function onCountChanged() {
+            window.clearMemberSelection()
+        }
+    }
+
+    Action {
+        id: runPipelineAction
+        text: "Run pipeline"
+        enabled: !pipelineController.pipelineRunning
+        onTriggered: pipelineController.runPipeline()
+    }
+
+    Action {
+        id: refreshGroupsAction
+        text: "Refresh groups"
+        onTriggered: pipelineController.refreshReviewGroups()
+    }
+
+    Action {
+        id: openLogicalStoreAction
+        text: "Open logical store"
+        onTriggered: pipelineController.openLogicalStore()
+    }
+
+    Action {
+        id: exitAction
+        text: "Exit"
+        onTriggered: Qt.quit()
+    }
+
+    Action {
+        id: clearSelectionAction
+        text: "Clear selection"
+        enabled: selectedMemberRows.length > 0
+        onTriggered: clearMemberSelection()
+    }
+
+    Action {
+        id: mergeSelectionAction
+        text: "Same group"
+        enabled: selectedMemberRows.length >= 2
+        onTriggered: mergeSelectedMembers()
+    }
+
+    Action {
+        id: splitSelectionAction
+        text: "Split selected"
+        enabled: selectedMemberRows.length >= 1
+        onTriggered: splitSelectedMembers()
+    }
+
+    Action {
+        id: toggleRepresentativeAction
+        text: "Toggle representative"
+        enabled: selectedMemberRows.length === 1
+        onTriggered: pipelineController.reviewMemberModel.toggleRepresentative(selectedMemberRows[0])
+    }
+
+    Action {
+        id: showPipelineWorkspaceAction
+        text: "Pipeline workspace"
+        checkable: true
+        checked: activePageIndex === 0
+        onTriggered: activePageIndex = 0
+    }
+
+    Action {
+        id: showReviewWorkspaceAction
+        text: "Review workspace"
+        checkable: true
+        checked: activePageIndex === 1
+        onTriggered: activePageIndex = 1
+    }
+
+    Action {
+        id: toggleOutputDockAction
+        text: logDockExpanded ? "Hide output dock" : "Show output dock"
+        onTriggered: logDockExpanded = !logDockExpanded
+    }
+
+    Action {
+        id: togglePipelineSectionsAction
+        text: allPipelinePanelsExpanded ? "Collapse pipeline sections" : "Expand pipeline sections"
+        onTriggered: setPipelinePanelsExpanded(!allPipelinePanelsExpanded)
+    }
+
+    Action {
+        id: openReviewWorkspaceAction
+        text: "Open review workspace"
+        enabled: pipelineController.reviewGroupModel.count > 0
+        onTriggered: activePageIndex = 1
+    }
+
+    Action {
+        id: saveDecisionAction
+        text: "Save decision"
+        enabled: pipelineController.hasCurrentGroup
+        onTriggered: pipelineController.saveCurrentDecision()
+    }
+
+    Action {
+        id: saveAndRerunAction
+        text: "Save and rerun"
+        enabled: pipelineController.hasCurrentGroup && !pipelineController.pipelineRunning
+        onTriggered: pipelineController.saveCurrentDecisionAndRerun()
+    }
+
+    Action {
+        id: reloadGroupAction
+        text: "Reload group"
+        enabled: pipelineController.hasCurrentGroup
+        onTriggered: pipelineController.reloadCurrentGroup()
+    }
+
+    Action {
+        id: aboutAction
+        text: "About Scrapbook"
+        enabled: false
+    }
+
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: 18
@@ -374,32 +758,140 @@ ApplicationWindow {
 
         Surface {
             Layout.fillWidth: true
-            implicitHeight: 96
+            implicitHeight: 60
 
             RowLayout {
                 anchors.fill: parent
-                anchors.margins: 18
-                spacing: 16
+                anchors.margins: 12
+                spacing: 12
 
-                ColumnLayout {
-                    Layout.fillWidth: true
-                    spacing: 4
+                Text {
+                    text: "Scrapbook"
+                    color: textPrimary
+                    font.family: uiFont
+                    font.pixelSize: 18
+                    font.weight: Font.DemiBold
+                }
 
-                    Text {
-                        text: "Scrapbook"
-                        color: textPrimary
-                        font.family: uiFont
-                        font.pixelSize: 32
-                        font.weight: Font.DemiBold
-                    }
+                Rectangle {
+                    width: 1
+                    height: 26
+                    color: edge
+                }
 
-                    Text {
-                        text: "Pipeline execution and duplicate review."
-                        color: textMuted
-                        font.family: bodyFont
-                        font.pixelSize: 14
+                Rectangle {
+                    Layout.preferredWidth: 720
+                    implicitHeight: 40
+                    radius: 12
+                    color: panelRaised
+                    border.color: edge
+                    border.width: 1
+
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.margins: 4
+                        spacing: 2
+
+                        MenuTrigger {
+                            text: "File"
+                            menu: fileMenu
+
+                            DarkMenu {
+                                id: fileMenu
+                                DarkMenuItem { action: runPipelineAction }
+                                DarkMenuItem { action: refreshGroupsAction }
+                                MenuSeparator {}
+                                DarkMenuItem { action: openLogicalStoreAction }
+                                MenuSeparator {}
+                                DarkMenuItem { action: exitAction }
+                            }
+                        }
+
+                        MenuTrigger {
+                            text: "Edit"
+                            menu: editMenu
+
+                            DarkMenu {
+                                id: editMenu
+                                DarkMenuItem { action: clearSelectionAction }
+                                DarkMenuItem { action: mergeSelectionAction }
+                                DarkMenuItem { action: splitSelectionAction }
+                                DarkMenuItem { action: toggleRepresentativeAction }
+                            }
+                        }
+
+                        MenuTrigger {
+                            text: "View"
+                            menu: viewMenu
+
+                            DarkMenu {
+                                id: viewMenu
+                                DarkMenuItem { action: showPipelineWorkspaceAction }
+                                DarkMenuItem { action: showReviewWorkspaceAction }
+                                MenuSeparator {}
+                                DarkMenuItem { action: toggleOutputDockAction }
+                                DarkMenuItem { action: togglePipelineSectionsAction }
+                            }
+                        }
+
+                        MenuTrigger {
+                            text: "Run"
+                            menu: runMenu
+
+                            DarkMenu {
+                                id: runMenu
+                                DarkMenuItem { action: runPipelineAction }
+                                DarkMenuItem { action: refreshGroupsAction }
+                                DarkMenuItem { action: openReviewWorkspaceAction }
+                            }
+                        }
+
+                        MenuTrigger {
+                            text: "Review"
+                            menu: reviewMenu
+
+                            DarkMenu {
+                                id: reviewMenu
+                                DarkMenuItem { action: saveDecisionAction }
+                                DarkMenuItem { action: saveAndRerunAction }
+                                DarkMenuItem { action: reloadGroupAction }
+                                MenuSeparator {}
+                                DarkMenuItem { action: mergeSelectionAction }
+                                DarkMenuItem { action: splitSelectionAction }
+                                DarkMenuItem { action: toggleRepresentativeAction }
+                            }
+                        }
+
+                        MenuTrigger {
+                            text: "Quick actions"
+                            menu: quickActionsMenu
+
+                            DarkMenu {
+                                id: quickActionsMenu
+                                DarkMenuItem { action: runPipelineAction }
+                                DarkMenuItem { action: refreshGroupsAction }
+                                DarkMenuItem { action: openLogicalStoreAction }
+                                MenuSeparator {}
+                                DarkMenuItem { action: saveDecisionAction }
+                                DarkMenuItem { action: saveAndRerunAction }
+                            }
+                        }
+
+                        MenuTrigger {
+                            text: "Help"
+                            menu: helpMenu
+
+                            DarkMenu {
+                                id: helpMenu
+                                DarkMenuItem { action: aboutAction }
+                            }
+                        }
+
+                        Item { Layout.fillWidth: true }
                     }
                 }
+
+                Item { Layout.fillWidth: true }
 
                 Rectangle {
                     Layout.preferredWidth: 240
@@ -444,15 +936,76 @@ ApplicationWindow {
             }
         }
 
-        RowLayout {
+        Surface {
+            Layout.fillWidth: true
+            implicitHeight: 78
+
+            RowLayout {
+                anchors.fill: parent
+                anchors.margins: 14
+                spacing: 16
+
+                TabBar {
+                    id: workspaceTabs
+                    Layout.preferredWidth: 320
+                    currentIndex: activePageIndex
+                    spacing: 18
+
+                    background: Item {
+                        Rectangle {
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.bottom: parent.bottom
+                            height: 1
+                            color: edge
+                        }
+                    }
+
+                    WorkspaceTabButton {
+                        text: "Pipeline"
+                        pageIndex: 0
+                    }
+
+                    WorkspaceTabButton {
+                        text: "Review"
+                        pageIndex: 1
+                    }
+                }
+
+                Item { Layout.fillWidth: true }
+
+                Text {
+                    text: activePageIndex === 0
+                        ? "Pipeline workspace"
+                        : "Review workspace"
+                    color: textMuted
+                    font.family: bodyFont
+                    font.pixelSize: 13
+                }
+            }
+        }
+
+        SplitView {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            spacing: 14
+            orientation: Qt.Vertical
+            handle: SplitHandle {}
 
-            Surface {
-                Layout.preferredWidth: 380
-                Layout.minimumWidth: 340
-                Layout.fillHeight: true
+            Item {
+                SplitView.fillWidth: true
+                SplitView.fillHeight: true
+
+                SplitView {
+                    anchors.fill: parent
+                    orientation: Qt.Horizontal
+                    handle: SplitHandle {}
+
+                    Surface {
+                        SplitView.preferredWidth: activePageIndex === 0 ? 380 : 0
+                        SplitView.minimumWidth: activePageIndex === 0 ? 340 : 0
+                        SplitView.maximumWidth: activePageIndex === 0 ? 520 : 0
+                        SplitView.fillHeight: true
+                        visible: activePageIndex === 0
 
                 ScrollView {
                     id: leftScroll
@@ -487,129 +1040,105 @@ ApplicationWindow {
                             }
                         }
 
-                        InsetSurface {
+                        CollapsiblePanel {
                             Layout.fillWidth: true
-                            implicitHeight: pathsContent.implicitHeight + 32
+                            title: "Paths"
+                            subtitle: "Input folder, workspace root, and optional tool override."
+                            expanded: window.pathsPanelExpanded
+                            onExpandedChanged: window.pathsPanelExpanded = expanded
 
-                            ColumnLayout {
-                                id: pathsContent
-                                anchors.left: parent.left
-                                anchors.right: parent.right
-                                anchors.top: parent.top
-                                anchors.margins: 16
-                                spacing: 12
+                            Text { text: "Source atlas folder"; color: textMuted; font.family: bodyFont; font.pixelSize: 13 }
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 10
+                                MonoField { Layout.fillWidth: true; text: pipelineController.sourceDirectory; onEditingFinished: pipelineController.sourceDirectory = text }
+                                MonoButton { text: "Browse"; onClicked: sourceFolderDialog.open() }
+                            }
 
-                                SectionLabel { text: "Paths" }
+                            Text { text: "Workspace root"; color: textMuted; font.family: bodyFont; font.pixelSize: 13 }
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 10
+                                MonoField { Layout.fillWidth: true; text: pipelineController.workspaceRoot; onEditingFinished: pipelineController.workspaceRoot = text }
+                                MonoButton { text: "Browse"; onClicked: workspaceFolderDialog.open() }
+                            }
 
-                                Text { text: "Source atlas folder"; color: textMuted; font.family: bodyFont; font.pixelSize: 13 }
-                                RowLayout {
-                                    Layout.fillWidth: true
-                                    spacing: 10
-                                    MonoField { Layout.fillWidth: true; text: pipelineController.sourceDirectory; onEditingFinished: pipelineController.sourceDirectory = text }
-                                    MonoButton { text: "Browse"; onClicked: sourceFolderDialog.open() }
-                                }
-
-                                Text { text: "Workspace root"; color: textMuted; font.family: bodyFont; font.pixelSize: 13 }
-                                RowLayout {
-                                    Layout.fillWidth: true
-                                    spacing: 10
-                                    MonoField { Layout.fillWidth: true; text: pipelineController.workspaceRoot; onEditingFinished: pipelineController.workspaceRoot = text }
-                                    MonoButton { text: "Browse"; onClicked: workspaceFolderDialog.open() }
-                                }
-
-                                Text { text: "libatlas tool override"; color: textMuted; font.family: bodyFont; font.pixelSize: 13 }
-                                RowLayout {
-                                    Layout.fillWidth: true
-                                    spacing: 10
-                                    MonoField { Layout.fillWidth: true; text: pipelineController.toolPath; placeholderText: "Optional"; onEditingFinished: pipelineController.toolPath = text }
-                                    MonoButton { text: "Browse"; onClicked: toolFileDialog.open() }
-                                }
+                            Text { text: "libatlas tool override"; color: textMuted; font.family: bodyFont; font.pixelSize: 13 }
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 10
+                                MonoField { Layout.fillWidth: true; text: pipelineController.toolPath; placeholderText: "Optional"; onEditingFinished: pipelineController.toolPath = text }
+                                MonoButton { text: "Browse"; onClicked: toolFileDialog.open() }
                             }
                         }
 
-                        InsetSurface {
+                        CollapsiblePanel {
                             Layout.fillWidth: true
-                            implicitHeight: configContent.implicitHeight + 32
+                            title: "Configuration"
+                            subtitle: "Build config, split strategy, and similarity budget."
+                            expanded: window.configPanelExpanded
+                            onExpandedChanged: window.configPanelExpanded = expanded
 
-                            ColumnLayout {
-                                id: configContent
-                                anchors.left: parent.left
-                                anchors.right: parent.right
-                                anchors.top: parent.top
-                                anchors.margins: 16
-                                spacing: 12
-
-                                SectionLabel { text: "Configuration" }
-
-                                RowLayout {
-                                    Layout.fillWidth: true
-                                    spacing: 10
-
-                                    ColumnLayout {
-                                        Layout.fillWidth: true
-                                        spacing: 6
-                                        Text { text: "Config"; color: textMuted; font.family: bodyFont; font.pixelSize: 13 }
-                                        MonoComboBox {
-                                            Layout.fillWidth: true
-                                            model: ["Debug", "Release"]
-                                            currentIndex: model.indexOf(pipelineController.config)
-                                            onActivated: pipelineController.config = currentText
-                                        }
-                                    }
-
-                                    ColumnLayout {
-                                        Layout.fillWidth: true
-                                        spacing: 6
-                                        Text { text: "Split mode"; color: textMuted; font.family: bodyFont; font.pixelSize: 13 }
-                                        MonoComboBox {
-                                            Layout.fillWidth: true
-                                            model: ["components", "auto", "bbox"]
-                                            currentIndex: model.indexOf(pipelineController.splitMode)
-                                            onActivated: pipelineController.splitMode = currentText
-                                        }
-                                    }
-                                }
-
-                                Text { text: "Similarity max pairs"; color: textMuted; font.family: bodyFont; font.pixelSize: 13 }
-                                MonoField {
-                                    Layout.fillWidth: true
-                                    text: String(pipelineController.similarityMaxPairs)
-                                    inputMethodHints: Qt.ImhDigitsOnly
-                                    onEditingFinished: {
-                                        const nextValue = parseInt(text)
-                                        if (!isNaN(nextValue)) {
-                                            pipelineController.similarityMaxPairs = nextValue
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        InsetSurface {
-                            Layout.fillWidth: true
-                            implicitHeight: workspaceContent.implicitHeight + 32
-
-                            ColumnLayout {
-                                id: workspaceContent
-                                anchors.left: parent.left
-                                anchors.right: parent.right
-                                anchors.top: parent.top
-                                anchors.margins: 16
+                            RowLayout {
+                                Layout.fillWidth: true
                                 spacing: 10
 
-                                SectionLabel { text: "Workspace" }
+                                ColumnLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 6
+                                    Text { text: "Config"; color: textMuted; font.family: bodyFont; font.pixelSize: 13 }
+                                    MonoComboBox {
+                                        Layout.fillWidth: true
+                                        model: ["Debug", "Release"]
+                                        currentIndex: model.indexOf(pipelineController.config)
+                                        onActivated: pipelineController.config = currentText
+                                    }
+                                }
 
-                                Text { text: "Asset store"; color: textFaint; font.family: bodyFont; font.pixelSize: 12 }
-                                Text { Layout.fillWidth: true; text: pipelineController.assetStoreDirectory; color: textMuted; font.family: monoFont; font.pixelSize: 12; wrapMode: Text.WrapAnywhere }
-                                Rectangle { Layout.fillWidth: true; height: 1; color: edge }
-
-                                Text { text: "Logical store"; color: textFaint; font.family: bodyFont; font.pixelSize: 12 }
-                                Text { Layout.fillWidth: true; text: pipelineController.logicalStoreDirectory; color: textMuted; font.family: monoFont; font.pixelSize: 12; wrapMode: Text.WrapAnywhere }
-                                Rectangle { Layout.fillWidth: true; height: 1; color: edge }
-
-                                Text { text: "Pipeline work dir"; color: textFaint; font.family: bodyFont; font.pixelSize: 12 }
-                                Text { Layout.fillWidth: true; text: pipelineController.pipelineWorkDirectory; color: textMuted; font.family: monoFont; font.pixelSize: 12; wrapMode: Text.WrapAnywhere }
+                                ColumnLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 6
+                                    Text { text: "Split mode"; color: textMuted; font.family: bodyFont; font.pixelSize: 13 }
+                                    MonoComboBox {
+                                        Layout.fillWidth: true
+                                        model: ["components", "auto", "bbox"]
+                                        currentIndex: model.indexOf(pipelineController.splitMode)
+                                        onActivated: pipelineController.splitMode = currentText
+                                    }
+                                }
                             }
+
+                            Text { text: "Similarity max pairs"; color: textMuted; font.family: bodyFont; font.pixelSize: 13 }
+                            MonoField {
+                                Layout.fillWidth: true
+                                text: String(pipelineController.similarityMaxPairs)
+                                inputMethodHints: Qt.ImhDigitsOnly
+                                onEditingFinished: {
+                                    const nextValue = parseInt(text)
+                                    if (!isNaN(nextValue)) {
+                                        pipelineController.similarityMaxPairs = nextValue
+                                    }
+                                }
+                            }
+                        }
+
+                        CollapsiblePanel {
+                            Layout.fillWidth: true
+                            title: "Workspace"
+                            subtitle: "Derived storage paths used by the pipeline and review tooling."
+                            expanded: window.workspacePanelExpanded
+                            onExpandedChanged: window.workspacePanelExpanded = expanded
+
+                            Text { text: "Asset store"; color: textFaint; font.family: bodyFont; font.pixelSize: 12 }
+                            Text { Layout.fillWidth: true; text: pipelineController.assetStoreDirectory; color: textMuted; font.family: monoFont; font.pixelSize: 12; wrapMode: Text.WrapAnywhere }
+                            Rectangle { Layout.fillWidth: true; height: 1; color: edge }
+
+                            Text { text: "Logical store"; color: textFaint; font.family: bodyFont; font.pixelSize: 12 }
+                            Text { Layout.fillWidth: true; text: pipelineController.logicalStoreDirectory; color: textMuted; font.family: monoFont; font.pixelSize: 12; wrapMode: Text.WrapAnywhere }
+                            Rectangle { Layout.fillWidth: true; height: 1; color: edge }
+
+                            Text { text: "Pipeline work dir"; color: textFaint; font.family: bodyFont; font.pixelSize: 12 }
+                            Text { Layout.fillWidth: true; text: pipelineController.pipelineWorkDirectory; color: textMuted; font.family: monoFont; font.pixelSize: 12; wrapMode: Text.WrapAnywhere }
                         }
 
                         RowLayout {
@@ -640,10 +1169,12 @@ ApplicationWindow {
                 }
             }
 
-            Surface {
-                Layout.preferredWidth: 300
-                Layout.minimumWidth: 260
-                Layout.fillHeight: true
+                    Surface {
+                        SplitView.preferredWidth: activePageIndex === 1 ? 300 : 0
+                        SplitView.minimumWidth: activePageIndex === 1 ? 260 : 0
+                        SplitView.maximumWidth: activePageIndex === 1 ? 420 : 0
+                        SplitView.fillHeight: true
+                        visible: activePageIndex === 1
 
                 ColumnLayout {
                     anchors.fill: parent
@@ -742,15 +1273,253 @@ ApplicationWindow {
                 }
             }
 
-            Surface {
-                Layout.fillWidth: true
-                Layout.minimumWidth: 560
-                Layout.fillHeight: true
+                    Surface {
+                        SplitView.fillWidth: true
+                        SplitView.minimumWidth: 560
+                        SplitView.fillHeight: true
 
-                ColumnLayout {
+                StackLayout {
                     anchors.fill: parent
-                    anchors.margins: 18
-                    spacing: 14
+                    currentIndex: activePageIndex
+
+                    Item {
+                        ColumnLayout {
+                            anchors.fill: parent
+                            anchors.margins: 22
+                            spacing: 16
+
+                            Text {
+                                text: "Pipeline workspace"
+                                color: textPrimary
+                                font.family: uiFont
+                                font.pixelSize: 28
+                                font.weight: Font.DemiBold
+                            }
+
+                            Text {
+                                Layout.fillWidth: true
+                                text: "Keep configuration on the Pipeline page, use the bottom output dock for live diagnostics, and switch to Review once candidate groups appear."
+                                color: textMuted
+                                font.family: bodyFont
+                                font.pixelSize: 14
+                                wrapMode: Text.Wrap
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 12
+
+                                InsetSurface {
+                                    Layout.fillWidth: true
+                                    implicitHeight: 120
+
+                                    ColumnLayout {
+                                        anchors.fill: parent
+                                        anchors.margins: 16
+                                        spacing: 8
+
+                                        SectionLabel { text: "Status" }
+                                        Text {
+                                            Layout.fillWidth: true
+                                            text: pipelineController.status
+                                            color: textPrimary
+                                            font.family: uiFont
+                                            font.pixelSize: 24
+                                            font.weight: Font.DemiBold
+                                            wrapMode: Text.Wrap
+                                        }
+                                        Text {
+                                            Layout.fillWidth: true
+                                            text: pipelineController.pipelineRunning ? "The runner is active. Watch the output dock for progress." : "Ready for the next run."
+                                            color: textMuted
+                                            font.family: bodyFont
+                                            font.pixelSize: 13
+                                            wrapMode: Text.Wrap
+                                        }
+                                    }
+                                }
+
+                                InsetSurface {
+                                    Layout.fillWidth: true
+                                    implicitHeight: 120
+
+                                    ColumnLayout {
+                                        anchors.fill: parent
+                                        anchors.margins: 16
+                                        spacing: 8
+
+                                        SectionLabel { text: "Review groups" }
+                                        Text {
+                                            Layout.fillWidth: true
+                                            text: String(pipelineController.reviewGroupModel.count)
+                                            color: textPrimary
+                                            font.family: uiFont
+                                            font.pixelSize: 24
+                                            font.weight: Font.DemiBold
+                                        }
+                                        Text {
+                                            Layout.fillWidth: true
+                                            text: pipelineController.reviewGroupModel.count > 0
+                                                ? "Candidate groups are ready for inspection."
+                                                : "No unresolved groups are currently loaded."
+                                            color: textMuted
+                                            font.family: bodyFont
+                                            font.pixelSize: 13
+                                            wrapMode: Text.Wrap
+                                        }
+                                    }
+                                }
+
+                                InsetSurface {
+                                    Layout.fillWidth: true
+                                    implicitHeight: 120
+
+                                    ColumnLayout {
+                                        anchors.fill: parent
+                                        anchors.margins: 16
+                                        spacing: 8
+
+                                        SectionLabel { text: "Current mode" }
+                                        Text {
+                                            Layout.fillWidth: true
+                                            text: pipelineController.splitMode + " / " + pipelineController.config
+                                            color: textPrimary
+                                            font.family: uiFont
+                                            font.pixelSize: 24
+                                            font.weight: Font.DemiBold
+                                        }
+                                        Text {
+                                            Layout.fillWidth: true
+                                            text: "Split strategy and build configuration for the next run."
+                                            color: textMuted
+                                            font.family: bodyFont
+                                            font.pixelSize: 13
+                                            wrapMode: Text.Wrap
+                                        }
+                                    }
+                                }
+                            }
+
+                            SplitView {
+                                Layout.fillWidth: true
+                                Layout.fillHeight: true
+                                orientation: Qt.Horizontal
+                                handle: SplitHandle {}
+
+                                InsetSurface {
+                                    SplitView.fillWidth: true
+                                    SplitView.fillHeight: true
+
+                                    ColumnLayout {
+                                        anchors.fill: parent
+                                        anchors.margins: 18
+                                        spacing: 12
+
+                                        Text {
+                                            text: "Workflow"
+                                            color: textPrimary
+                                            font.family: uiFont
+                                            font.pixelSize: 22
+                                            font.weight: Font.DemiBold
+                                        }
+
+                                        Text {
+                                            Layout.fillWidth: true
+                                            text: "1. Configure paths and split mode. 2. Run the pipeline. 3. Switch to Review. 4. Merge or split candidate groups. 5. Save decisions and rerun until the queue is empty."
+                                            color: textMuted
+                                            font.family: bodyFont
+                                            font.pixelSize: 14
+                                            wrapMode: Text.Wrap
+                                        }
+
+                                        Rectangle { Layout.fillWidth: true; height: 1; color: edge }
+
+                                        Text {
+                                            Layout.fillWidth: true
+                                            text: "All live output is in the bottom dock, which you can collapse when you need more workspace."
+                                            color: textFaint
+                                            font.family: bodyFont
+                                            font.pixelSize: 13
+                                            wrapMode: Text.Wrap
+                                        }
+                                    }
+                                }
+
+                                InsetSurface {
+                                    SplitView.preferredWidth: 340
+                                    SplitView.minimumWidth: 280
+                                    SplitView.fillHeight: true
+
+                                    ColumnLayout {
+                                        anchors.fill: parent
+                                        anchors.margins: 18
+                                        spacing: 12
+
+                                        Text {
+                                            text: "Session"
+                                            color: textPrimary
+                                            font.family: uiFont
+                                            font.pixelSize: 22
+                                            font.weight: Font.DemiBold
+                                        }
+
+                                        Text {
+                                            Layout.fillWidth: true
+                                            text: "Workspace root"
+                                            color: textFaint
+                                            font.family: bodyFont
+                                            font.pixelSize: 12
+                                        }
+
+                                        Text {
+                                            Layout.fillWidth: true
+                                            text: pipelineController.workspaceRoot
+                                            color: textMuted
+                                            font.family: monoFont
+                                            font.pixelSize: 12
+                                            wrapMode: Text.WrapAnywhere
+                                        }
+
+                                        Rectangle { Layout.fillWidth: true; height: 1; color: edge }
+
+                                        Text {
+                                            Layout.fillWidth: true
+                                            text: "Review queue"
+                                            color: textFaint
+                                            font.family: bodyFont
+                                            font.pixelSize: 12
+                                        }
+
+                                        Text {
+                                            Layout.fillWidth: true
+                                            text: pipelineController.reviewGroupModel.count + " unresolved groups ready for review."
+                                            color: textMuted
+                                            font.family: bodyFont
+                                            font.pixelSize: 13
+                                            wrapMode: Text.Wrap
+                                        }
+
+                                        Rectangle { Layout.fillWidth: true; height: 1; color: edge }
+
+                                        Text {
+                                            Layout.fillWidth: true
+                                            text: "Top menus hold run, review, and quick actions. Use the dock below for output and the tabs above to change workspace."
+                                            color: textFaint
+                                            font.family: bodyFont
+                                            font.pixelSize: 13
+                                            wrapMode: Text.Wrap
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Item {
+                        ColumnLayout {
+                            anchors.fill: parent
+                            anchors.margins: 18
+                            spacing: 14
 
                     RowLayout {
                         Layout.fillWidth: true
@@ -786,14 +1555,15 @@ ApplicationWindow {
                         }
                     }
 
-                    RowLayout {
+                    SplitView {
                         Layout.fillWidth: true
                         Layout.preferredHeight: 320
-                        spacing: 12
+                        orientation: Qt.Horizontal
+                        handle: SplitHandle {}
 
                         InsetSurface {
-                            Layout.fillWidth: true
-                            Layout.fillHeight: true
+                            SplitView.fillWidth: true
+                            SplitView.fillHeight: true
 
                             ColumnLayout {
                                 anchors.fill: parent
@@ -846,8 +1616,9 @@ ApplicationWindow {
                         }
 
                         InsetSurface {
-                            Layout.preferredWidth: 300
-                            Layout.fillHeight: true
+                            SplitView.preferredWidth: 300
+                            SplitView.minimumWidth: 260
+                            SplitView.fillHeight: true
 
                             ColumnLayout {
                                 anchors.fill: parent
@@ -908,6 +1679,52 @@ ApplicationWindow {
                                 }
                             }
 
+                            Text {
+                                Layout.fillWidth: true
+                                text: selectedMemberRows.length > 0
+                                    ? selectedMemberRows.length + " selected. Merge them if they are the same image, split them if they are not, then choose the representative kept for the merged group."
+                                    : "Click member cards below to select them. Use Same group, Split selected, and Pick representative so the whole review can be done from the UI."
+                                color: textMuted
+                                font.family: bodyFont
+                                font.pixelSize: 13
+                                wrapMode: Text.Wrap
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 10
+
+                                MonoButton {
+                                    text: "Same group"
+                                    enabled: pipelineController.hasCurrentGroup && selectedMemberRows.length >= 2
+                                    onClicked: {
+                                        pipelineController.reviewMemberModel.mergeRows(selectedMemberRows)
+                                        window.clearMemberSelection()
+                                    }
+                                }
+
+                                MonoButton {
+                                    text: "Split selected"
+                                    enabled: pipelineController.hasCurrentGroup && selectedMemberRows.length >= 1
+                                    onClicked: {
+                                        pipelineController.reviewMemberModel.splitRows(selectedMemberRows)
+                                        window.clearMemberSelection()
+                                    }
+                                }
+
+                                MonoButton {
+                                    text: "Pick representative"
+                                    enabled: pipelineController.hasCurrentGroup && selectedMemberRows.length === 1
+                                    onClicked: pipelineController.reviewMemberModel.chooseRepresentative(selectedMemberRows[0])
+                                }
+
+                                MonoButton {
+                                    text: "Clear selection"
+                                    enabled: selectedMemberRows.length > 0
+                                    onClicked: window.clearMemberSelection()
+                                }
+                            }
+
                             ListView {
                                 Layout.fillWidth: true
                                 Layout.fillHeight: true
@@ -927,12 +1744,13 @@ ApplicationWindow {
                                     required property bool representative
                                     required property bool mergedBySimilarity
                                     required property bool mergedByReview
+                                    property bool selected: window.isMemberSelected(index)
 
                                     width: ListView.view.width - 8
-                                    height: 142
+                                    height: 166
                                     radius: 14
-                                    color: panelInset
-                                    border.color: representative ? edgeStrong : edge
+                                    color: selected ? "#171c22" : panelInset
+                                    border.color: selected ? "#f4f4f4" : (representative ? edgeStrong : edge)
                                     border.width: 1
 
                                     RowLayout {
@@ -945,7 +1763,7 @@ ApplicationWindow {
                                             Layout.preferredHeight: 104
                                             radius: 12
                                             color: "#171717"
-                                            border.color: edge
+                                            border.color: selected ? edgeStrong : edge
                                             border.width: 1
 
                                             Item {
@@ -969,6 +1787,13 @@ ApplicationWindow {
                                                     font.family: bodyFont
                                                     font.pixelSize: 12
                                                 }
+                                            }
+
+                                            MouseArea {
+                                                anchors.fill: parent
+                                                hoverEnabled: true
+                                                cursorShape: Qt.PointingHandCursor
+                                                onClicked: window.toggleMemberSelection(index)
                                             }
                                         }
 
@@ -1017,13 +1842,13 @@ ApplicationWindow {
                                                 Layout.fillWidth: true
                                                 text: {
                                                     let flags = []
-                                                    if (representative)
-                                                        flags.push("Representative")
                                                     if (mergedBySimilarity)
                                                         flags.push("Similarity merge")
                                                     if (mergedByReview)
                                                         flags.push("Review merge")
-                                                    return flags.length > 0 ? flags.join(" • ") : "No flags"
+                                                    if (selected)
+                                                        flags.push("Selected")
+                                                    return flags.length > 0 ? flags.join(" | ") : "No flags"
                                                 }
                                                 color: textFaint
                                                 font.family: bodyFont
@@ -1033,22 +1858,39 @@ ApplicationWindow {
                                         }
 
                                         ColumnLayout {
-                                            Layout.preferredWidth: 164
-                                            spacing: 8
+                                            Layout.preferredWidth: 132
+                                            Layout.alignment: Qt.AlignTop
+                                            spacing: 6
 
-                                            SectionLabel { text: "Decision group" }
-
-                                            MonoSpinBox {
-                                                from: 1
-                                                to: Math.max(1, pipelineController.reviewMemberModel.count)
-                                                value: clusterIndex
-                                                onValueModified: pipelineController.reviewMemberModel.setClusterIndex(index, value)
-                                            }
+                                            SectionLabel { text: "Group " + clusterIndex }
 
                                             MonoCheckBox {
-                                                checked: representative
-                                                text: "Representative"
-                                                onToggled: pipelineController.reviewMemberModel.setRepresentative(index, checked)
+                                                checked: selected
+                                                text: "Selected"
+                                                onClicked: window.toggleMemberSelection(index)
+                                            }
+
+                                            MenuTrigger {
+                                                text: representative ? "Representative" : "Actions"
+                                                menu: memberActionsMenu
+
+                                                DarkMenu {
+                                                    id: memberActionsMenu
+                                                    Action {
+                                                        text: representative ? "Clear representative" : "Make representative"
+                                                        onTriggered: {
+                                                            window.selectedMemberRows = [index]
+                                                            pickSelectedRepresentative()
+                                                        }
+                                                    }
+                                                    Action {
+                                                        text: "Split out"
+                                                        onTriggered: {
+                                                            window.selectedMemberRows = [index]
+                                                            splitSelectedMembers()
+                                                        }
+                                                    }
+                                                }
                                             }
                                         }
                                     }
@@ -1068,18 +1910,20 @@ ApplicationWindow {
                         }
                     }
                 }
+                    }
+                }
             }
-        }
 
-        Surface {
-            Layout.fillWidth: true
-            Layout.preferredHeight: 300
-            Layout.minimumHeight: 220
+            Surface {
+                SplitView.fillWidth: true
+                SplitView.preferredHeight: logDockExpanded ? 300 : 68
+                SplitView.minimumHeight: logDockExpanded ? 68 : 68
+                SplitView.maximumHeight: logDockExpanded ? 420 : 68
 
-            ColumnLayout {
-                anchors.fill: parent
-                anchors.margins: 18
-                spacing: 12
+                ColumnLayout {
+                    anchors.fill: parent
+                    anchors.margins: 18
+                    spacing: 12
 
                 RowLayout {
                     Layout.fillWidth: true
@@ -1100,11 +1944,17 @@ ApplicationWindow {
                         font.family: bodyFont
                         font.pixelSize: 13
                     }
+
+                    MonoButton {
+                        text: logDockExpanded ? "Collapse" : "Expand"
+                        onClicked: logDockExpanded = !logDockExpanded
+                    }
                 }
 
                 InsetSurface {
                     Layout.fillWidth: true
                     Layout.fillHeight: true
+                    visible: logDockExpanded
 
                     ScrollView {
                         id: pipelineLogScroll
@@ -1141,7 +1991,10 @@ ApplicationWindow {
                         }
                     }
                 }
+                }
             }
         }
     }
+}
+}
 }
