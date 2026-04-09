@@ -1,0 +1,13 @@
+{
+  "cmake.useCMakePresets": "always",
+  "cmake.defaultConfigurePreset": "debug-msvc",
+  "cmake.defaultBuildPreset": "build-debug",
+  "cmake.configureOnOpen": false,
+  "cmake.buildBeforeRun": false,
+  "cmake.showOptionsMovedNotification": false,
+  "C_Cpp.default.configurationProvider": "ms-vscode.cmake-tools",
+  "files.associations": {
+    "*.qml": "qml",
+    "qmldir": "qml"
+  }
+}

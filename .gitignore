@@ -52,3 +52,12 @@ compile_commands.json
 *creator.user*
 
 *_qmlcache.qrc
+
+# Build outputs
+/build/
+/dist/
+/out/
+/.vs/
+
+# Qt QML language server local config
+.qmlls.ini

@@ -1,0 +1,3 @@
+[submodule "third_party/libatlas"]
+	path = third_party/libatlas
+	url = git@github.com:Adriwin06/libatlas.git

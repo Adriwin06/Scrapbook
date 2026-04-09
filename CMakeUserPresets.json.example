@@ -1,0 +1,47 @@
+{
+  "version": 6,
+  "configurePresets": [
+    {
+      "name": "debug-msvc-user",
+      "inherits": "debug-msvc",
+      "cacheVariables": {
+        "Qt6_DIR": "C:/Path/To/Qt/6.x.x/msvc2022_64/lib/cmake/Qt6"
+      },
+      "environment": {
+        "CMAKE_PREFIX_PATH": "C:/Path/To/Qt/6.x.x/msvc2022_64"
+      }
+    },
+    {
+      "name": "release-msvc-user",
+      "inherits": "release-msvc",
+      "cacheVariables": {
+        "Qt6_DIR": "C:/Path/To/Qt/6.x.x/msvc2022_64/lib/cmake/Qt6"
+      },
+      "environment": {
+        "CMAKE_PREFIX_PATH": "C:/Path/To/Qt/6.x.x/msvc2022_64"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "build-debug-user",
+      "configurePreset": "debug-msvc-user",
+      "configuration": "Debug",
+      "targets": [
+        "scrapbook",
+        "scrapbook_pipeline",
+        "libatlas_tool"
+      ]
+    },
+    {
+      "name": "build-release-user",
+      "configurePreset": "release-msvc-user",
+      "configuration": "Release",
+      "targets": [
+        "scrapbook",
+        "scrapbook_pipeline",
+        "libatlas_tool"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,48 @@
+{
+  "version": 6,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 27,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "debug-msvc",
+      "displayName": "Debug (VS2022 x64 + Qt)",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/build"
+    },
+    {
+      "name": "release-msvc",
+      "displayName": "Release (VS2022 x64 + Qt)",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/build"
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "build-debug",
+      "displayName": "Build Debug",
+      "configurePreset": "debug-msvc",
+      "configuration": "Debug",
+      "targets": [
+        "scrapbook",
+        "scrapbook_pipeline",
+        "libatlas_tool"
+      ]
+    },
+    {
+      "name": "build-release",
+      "displayName": "Build Release",
+      "configurePreset": "release-msvc",
+      "configuration": "Release",
+      "targets": [
+        "scrapbook",
+        "scrapbook_pipeline",
+        "libatlas_tool"
+      ]
+    }
+  ]
+}
