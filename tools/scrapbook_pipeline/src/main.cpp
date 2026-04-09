@@ -1,12 +1,12 @@
-#include <QCoreApplication>
+#include <QGuiApplication>
 
 #include "pipelinerunner.h"
 
 int main(int argc, char* argv[]) {
-  QCoreApplication app(argc, argv);
-  QCoreApplication::setApplicationName(QStringLiteral("scrapbook_pipeline"));
-  QCoreApplication::setOrganizationName(QStringLiteral("Adriwin06"));
+  QGuiApplication app(argc, argv);
+  QGuiApplication::setApplicationName(QStringLiteral("scrapbook_pipeline"));
+  QGuiApplication::setOrganizationName(QStringLiteral("Adriwin06"));
 
   PipelineRunner runner;
-  return runner.run(QCoreApplication::arguments());
+  return runner.run(QGuiApplication::arguments());
 }

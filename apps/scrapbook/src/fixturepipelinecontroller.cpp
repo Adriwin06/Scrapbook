@@ -68,12 +68,13 @@ FixturePipelineController::FixturePipelineController(QObject* parent)
   m_similarityMaxPairs = m_settings.value(QStringLiteral("similarityMaxPairs"), 20000).toInt();
   m_status = QStringLiteral("Idle");
   m_currentGroupTitle = QStringLiteral("No unresolved review groups.");
+  m_pipelineProcess.setProcessChannelMode(QProcess::MergedChannels);
 
-  connect(&m_pipelineProcess, &QProcess::readyReadStandardOutput, this, [this]() {
-    appendLog(QString::fromLocal8Bit(m_pipelineProcess.readAllStandardOutput()));
+  connect(&m_pipelineProcess, &QProcess::readyRead, this, [this]() {
+    appendLog(QString::fromLocal8Bit(m_pipelineProcess.readAll()));
   });
-  connect(&m_pipelineProcess, &QProcess::readyReadStandardError, this, [this]() {
-    appendLog(QString::fromLocal8Bit(m_pipelineProcess.readAllStandardError()));
+  connect(&m_pipelineProcess, &QProcess::errorOccurred, this, [this](QProcess::ProcessError error) {
+    appendLog(QStringLiteral("Pipeline process error (%1): %2").arg(int(error)).arg(m_pipelineProcess.errorString()));
   });
   connect(
       &m_pipelineProcess,
@@ -330,6 +331,10 @@ void FixturePipelineController::runPipeline() {
     arguments << QStringLiteral("--tool") << m_toolPath;
   }
 
+  if (!m_logText.isEmpty()) {
+    m_logText.clear();
+    emit logTextChanged();
+  }
   appendLog(QStringLiteral("$ %1 %2").arg(executable, arguments.join(QLatin1Char(' '))));
   setStatus(QStringLiteral("Running pipeline..."));
   emit pipelineRunningChanged();

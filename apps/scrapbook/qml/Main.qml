@@ -636,35 +636,6 @@ ApplicationWindow {
                             text: "Open logical store"
                             onClicked: pipelineController.openLogicalStore()
                         }
-
-                        InsetSurface {
-                            Layout.fillWidth: true
-                            implicitHeight: 300
-
-                            ColumnLayout {
-                                anchors.fill: parent
-                                anchors.margins: 16
-                                spacing: 10
-
-                                Text {
-                                    text: "Pipeline log"
-                                    color: textPrimary
-                                    font.family: uiFont
-                                    font.pixelSize: 20
-                                    font.weight: Font.DemiBold
-                                }
-
-                                MonoTextArea {
-                                    Layout.fillWidth: true
-                                    Layout.fillHeight: true
-                                    monospace: true
-                                    readOnly: true
-                                    wrapMode: TextArea.WrapAnywhere
-                                    placeholderText: "Pipeline output will appear here."
-                                    text: pipelineController.logText
-                                }
-                            }
-                        }
                     }
                 }
             }
@@ -1092,6 +1063,79 @@ ApplicationWindow {
                                     color: textFaint
                                     font.family: bodyFont
                                     font.pixelSize: 14
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Surface {
+            Layout.fillWidth: true
+            Layout.preferredHeight: 300
+            Layout.minimumHeight: 220
+
+            ColumnLayout {
+                anchors.fill: parent
+                anchors.margins: 18
+                spacing: 12
+
+                RowLayout {
+                    Layout.fillWidth: true
+
+                    Text {
+                        text: "Pipeline log"
+                        color: textPrimary
+                        font.family: uiFont
+                        font.pixelSize: 22
+                        font.weight: Font.DemiBold
+                    }
+
+                    Item { Layout.fillWidth: true }
+
+                    Text {
+                        text: pipelineController.pipelineRunning ? "Live output" : "Latest run"
+                        color: textFaint
+                        font.family: bodyFont
+                        font.pixelSize: 13
+                    }
+                }
+
+                InsetSurface {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+
+                    ScrollView {
+                        id: pipelineLogScroll
+                        anchors.fill: parent
+                        anchors.margins: 1
+                        clip: true
+                        ScrollBar.vertical: RailScrollBar {}
+                        ScrollBar.horizontal: RailScrollBar {}
+
+                        TextArea {
+                            id: pipelineLogOutput
+                            width: Math.max(pipelineLogScroll.availableWidth, implicitWidth)
+                            color: textPrimary
+                            font.family: monoFont
+                            font.pixelSize: 13
+                            readOnly: true
+                            selectByMouse: true
+                            persistentSelection: true
+                            padding: 14
+                            wrapMode: TextEdit.NoWrap
+                            placeholderText: "Pipeline output will appear here."
+                            placeholderTextColor: textFaint
+                            text: pipelineController.logText
+                            background: Rectangle {
+                                color: panelInset
+                            }
+
+                            onTextChanged: {
+                                cursorPosition = length
+                                if (parent && parent.contentItem) {
+                                    parent.contentItem.contentY = Math.max(0, parent.contentItem.contentHeight - parent.contentItem.height)
                                 }
                             }
                         }

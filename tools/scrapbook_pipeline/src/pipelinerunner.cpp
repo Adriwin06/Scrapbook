@@ -17,10 +17,18 @@
 #include <QProcess>
 #include <QSet>
 #include <QTextStream>
+#include <QElapsedTimer>
 
+#include <atomic>
+#include <exception>
 #include <functional>
 #include <algorithm>
+#include <limits>
+#include <mutex>
+#include <optional>
 #include <stdexcept>
+#include <thread>
+#include <vector>
 
 namespace {
 
@@ -46,6 +54,7 @@ struct Options {
   double similarityAutoMaxAspectRatioDelta = 0.10;
   double similarityAutoMinDimensionRatio = 0.90;
   int similarityReportMaxPairs = 500;
+  int jobs = 0;
 };
 
 struct Component {
@@ -75,11 +84,18 @@ struct LogicalGroup {
 };
 
 struct SourceResult {
+  int sourceIndex = -1;
   QJsonObject summaryItem;
   QList<QJsonObject> packItems;
   QList<QPair<QString, QString>> duplicateEntries;
   int extractionCount = 0;
   int deduplicatedOutputs = 0;
+  double durationSeconds = 0.0;
+};
+
+struct PackInputAnalysis {
+  int requiredWidth = 0;
+  int requiredHeight = 0;
 };
 
 QString executableName(const QString& baseName) {
@@ -95,8 +111,65 @@ QString nowStamp() {
 }
 
 void logLine(const QString& level, const QString& message) {
+  static std::mutex logMutex;
+  std::lock_guard<std::mutex> lock(logMutex);
   QTextStream stream(stdout);
   stream << nowStamp() << " [" << level << "] " << message << Qt::endl;
+}
+
+QString formatDuration(double seconds) {
+  if (seconds < 60.0) {
+    return QStringLiteral("%1s").arg(QString::number(seconds, 'f', 2));
+  }
+  const int hours = int(seconds / 3600.0);
+  seconds -= hours * 3600.0;
+  const int minutes = int(seconds / 60.0);
+  seconds -= minutes * 60.0;
+  if (hours > 0) {
+    return QStringLiteral("%1h%2m%3s")
+        .arg(hours)
+        .arg(minutes, 2, 10, QLatin1Char('0'))
+        .arg(QString::number(seconds, 'f', 1));
+  }
+  return QStringLiteral("%1m%2s").arg(minutes).arg(QString::number(seconds, 'f', 1));
+}
+
+int resolveJobCount(int requestedJobs, int sourceCount) {
+  if (requestedJobs < 0) {
+    throw std::runtime_error("--jobs must be at least 1.");
+  }
+  if (sourceCount <= 0) {
+    return 1;
+  }
+  const unsigned int hardwareThreads = std::max(1u, std::thread::hardware_concurrency());
+  const int effectiveJobs = requestedJobs > 0 ? requestedJobs : int(hardwareThreads);
+  return std::max(1, std::min(effectiveJobs, sourceCount));
+}
+
+PackInputAnalysis analyzePackInputs(const QList<QJsonObject>& packItems, int padding) {
+  PackInputAnalysis analysis;
+  for (const QJsonObject& item : packItems) {
+    const QString imagePath = item.value(QStringLiteral("image")).toString();
+    if (imagePath.isEmpty()) {
+      continue;
+    }
+    QImageReader reader(imagePath);
+    const QSize size = reader.size();
+    if (!size.isValid()) {
+      QImage image = reader.read();
+      if (image.isNull()) {
+        throw std::runtime_error(
+            QStringLiteral("Could not inspect pack image %1: %2").arg(imagePath, reader.errorString()).toStdString());
+      }
+      analysis.requiredWidth = std::max(analysis.requiredWidth, image.width() + (padding * 2));
+      analysis.requiredHeight = std::max(analysis.requiredHeight, image.height() + (padding * 2));
+      continue;
+    }
+
+    analysis.requiredWidth = std::max(analysis.requiredWidth, size.width() + (padding * 2));
+    analysis.requiredHeight = std::max(analysis.requiredHeight, size.height() + (padding * 2));
+  }
+  return analysis;
 }
 
 QString normalizedPath(QString path) {
@@ -194,12 +267,328 @@ void runProcess(const QString& program, const QStringList& arguments) {
   }
 }
 
+quint8 byteAt(const QByteArray& bytes, int offset) {
+  if (offset < 0 || offset >= bytes.size()) {
+    throw std::runtime_error("Unexpected end of image data.");
+  }
+  return static_cast<quint8>(bytes.at(offset));
+}
+
+quint16 readU16(const QByteArray& bytes, int offset) {
+  return quint16(byteAt(bytes, offset)) | (quint16(byteAt(bytes, offset + 1)) << 8);
+}
+
+quint32 readU32(const QByteArray& bytes, int offset) {
+  return quint32(byteAt(bytes, offset)) | (quint32(byteAt(bytes, offset + 1)) << 8) |
+         (quint32(byteAt(bytes, offset + 2)) << 16) | (quint32(byteAt(bytes, offset + 3)) << 24);
+}
+
+quint64 readU48(const QByteArray& bytes, int offset) {
+  quint64 value = 0;
+  for (int index = 0; index < 6; ++index) {
+    value |= quint64(byteAt(bytes, offset + index)) << (index * 8);
+  }
+  return value;
+}
+
+QByteArray readFileBytes(const QString& path) {
+  QFile file(path);
+  if (!file.open(QIODevice::ReadOnly)) {
+    throw std::runtime_error(QStringLiteral("Could not open %1").arg(path).toStdString());
+  }
+  return file.readAll();
+}
+
+quint8 scaleChannel(quint32 pixel, quint32 mask, quint8 defaultValue = 255) {
+  if (mask == 0) {
+    return defaultValue;
+  }
+
+  quint32 shiftedMask = mask;
+  int shift = 0;
+  while ((shiftedMask & 1u) == 0u) {
+    shiftedMask >>= 1;
+    ++shift;
+  }
+
+  quint32 maxValue = shiftedMask;
+  quint32 value = (pixel & mask) >> shift;
+  return maxValue == 0 ? defaultValue : quint8((value * 255u + (maxValue / 2u)) / maxValue);
+}
+
+struct Rgba8 {
+  quint8 r = 0;
+  quint8 g = 0;
+  quint8 b = 0;
+  quint8 a = 255;
+};
+
+Rgba8 decodeRgb565(quint16 value) {
+  return {
+      quint8((((value >> 11) & 0x1f) * 255u + 15u) / 31u),
+      quint8((((value >> 5) & 0x3f) * 255u + 31u) / 63u),
+      quint8(((value & 0x1f) * 255u + 15u) / 31u),
+      255,
+  };
+}
+
+Rgba8 mixColors(const Rgba8& left, int leftWeight, const Rgba8& right, int rightWeight, int divisor) {
+  return {
+      quint8(((int(left.r) * leftWeight) + (int(right.r) * rightWeight)) / divisor),
+      quint8(((int(left.g) * leftWeight) + (int(right.g) * rightWeight)) / divisor),
+      quint8(((int(left.b) * leftWeight) + (int(right.b) * rightWeight)) / divisor),
+      quint8(((int(left.a) * leftWeight) + (int(right.a) * rightWeight)) / divisor),
+  };
+}
+
+void setPixelRgba(QImage& image, int x, int y, const Rgba8& color) {
+  if (x < 0 || y < 0 || x >= image.width() || y >= image.height()) {
+    return;
+  }
+  uchar* pixel = image.scanLine(y) + (x * 4);
+  pixel[0] = color.r;
+  pixel[1] = color.g;
+  pixel[2] = color.b;
+  pixel[3] = color.a;
+}
+
+QImage loadDdsFallback(const QString& path) {
+  const QByteArray bytes = readFileBytes(path);
+  if (bytes.size() < 128 || bytes.left(4) != "DDS ") {
+    throw std::runtime_error("Invalid DDS header.");
+  }
+  if (readU32(bytes, 4) != 124 || readU32(bytes, 76) != 32) {
+    throw std::runtime_error("Unsupported DDS header size.");
+  }
+
+  const int height = int(readU32(bytes, 12));
+  const int width = int(readU32(bytes, 16));
+  const quint32 pixelFormatFlags = readU32(bytes, 80);
+  const QByteArray fourCC = bytes.mid(84, 4);
+  const quint32 rgbBitCount = readU32(bytes, 88);
+  const quint32 redMask = readU32(bytes, 92);
+  const quint32 greenMask = readU32(bytes, 96);
+  const quint32 blueMask = readU32(bytes, 100);
+  const quint32 alphaMask = readU32(bytes, 104);
+
+  if (width <= 0 || height <= 0) {
+    throw std::runtime_error("DDS image has invalid dimensions.");
+  }
+
+  QImage image(width, height, QImage::Format_RGBA8888);
+  if (image.isNull()) {
+    throw std::runtime_error("Could not allocate image buffer.");
+  }
+
+  const int dataOffset = 128;
+  if ((pixelFormatFlags & 0x4u) != 0u) {
+    const int blockSize = fourCC == "DXT1" ? 8 : (fourCC == "DXT5" ? 16 : 0);
+    if (blockSize == 0) {
+      throw std::runtime_error(QStringLiteral("Unsupported DDS compression format: %1")
+                                   .arg(QString::fromLatin1(fourCC))
+                                   .toStdString());
+    }
+
+    const int blockCountX = (width + 3) / 4;
+    const int blockCountY = (height + 3) / 4;
+    const qsizetype requiredBytes = qsizetype(blockCountX) * qsizetype(blockCountY) * qsizetype(blockSize);
+    if ((bytes.size() - dataOffset) < requiredBytes) {
+      throw std::runtime_error("DDS file is truncated.");
+    }
+
+    int offset = dataOffset;
+    for (int blockY = 0; blockY < blockCountY; ++blockY) {
+      for (int blockX = 0; blockX < blockCountX; ++blockX) {
+        quint8 alphaPalette[8]{};
+        quint64 alphaIndices = 0;
+        if (fourCC == "DXT5") {
+          const quint8 alpha0 = byteAt(bytes, offset);
+          const quint8 alpha1 = byteAt(bytes, offset + 1);
+          alphaPalette[0] = alpha0;
+          alphaPalette[1] = alpha1;
+          if (alpha0 > alpha1) {
+            for (int index = 1; index <= 6; ++index) {
+              alphaPalette[index + 1] = quint8((((7 - index) * int(alpha0)) + (index * int(alpha1))) / 7);
+            }
+          } else {
+            for (int index = 1; index <= 4; ++index) {
+              alphaPalette[index + 1] = quint8((((5 - index) * int(alpha0)) + (index * int(alpha1))) / 5);
+            }
+            alphaPalette[6] = 0;
+            alphaPalette[7] = 255;
+          }
+          alphaIndices = readU48(bytes, offset + 2);
+          offset += 8;
+        }
+
+        const quint16 color0Value = readU16(bytes, offset);
+        const quint16 color1Value = readU16(bytes, offset + 2);
+        const quint32 colorIndices = readU32(bytes, offset + 4);
+        offset += 8;
+
+        Rgba8 palette[4]{};
+        palette[0] = decodeRgb565(color0Value);
+        palette[1] = decodeRgb565(color1Value);
+        if (fourCC == "DXT1" && color0Value <= color1Value) {
+          palette[2] = mixColors(palette[0], 1, palette[1], 1, 2);
+          palette[3] = {0, 0, 0, 0};
+        } else {
+          palette[2] = mixColors(palette[0], 2, palette[1], 1, 3);
+          palette[3] = mixColors(palette[0], 1, palette[1], 2, 3);
+        }
+
+        for (int pixelIndex = 0; pixelIndex < 16; ++pixelIndex) {
+          Rgba8 color = palette[(colorIndices >> (pixelIndex * 2)) & 0x3u];
+          if (fourCC == "DXT5") {
+            color.a = alphaPalette[(alphaIndices >> (pixelIndex * 3)) & 0x7u];
+          }
+          const int x = (blockX * 4) + (pixelIndex % 4);
+          const int y = (blockY * 4) + (pixelIndex / 4);
+          setPixelRgba(image, x, y, color);
+        }
+      }
+    }
+
+    return image;
+  }
+
+  if ((pixelFormatFlags & 0x40u) == 0u || (rgbBitCount != 24u && rgbBitCount != 32u)) {
+    throw std::runtime_error("Unsupported DDS pixel format.");
+  }
+
+  const int bytesPerPixel = int(rgbBitCount / 8u);
+  const qsizetype requiredBytes = qsizetype(width) * qsizetype(height) * qsizetype(bytesPerPixel);
+  if ((bytes.size() - dataOffset) < requiredBytes) {
+    throw std::runtime_error("DDS file is truncated.");
+  }
+
+  const uchar* source = reinterpret_cast<const uchar*>(bytes.constData() + dataOffset);
+  for (int y = 0; y < height; ++y) {
+    uchar* destination = image.scanLine(y);
+    for (int x = 0; x < width; ++x) {
+      quint32 pixel = 0;
+      const qsizetype pixelOffset = (qsizetype(y) * width + x) * bytesPerPixel;
+      for (int index = 0; index < bytesPerPixel; ++index) {
+        pixel |= quint32(source[pixelOffset + index]) << (index * 8);
+      }
+      destination[(x * 4) + 0] = scaleChannel(pixel, redMask, 0);
+      destination[(x * 4) + 1] = scaleChannel(pixel, greenMask, 0);
+      destination[(x * 4) + 2] = scaleChannel(pixel, blueMask, 0);
+      destination[(x * 4) + 3] = scaleChannel(pixel, alphaMask, 255);
+    }
+  }
+
+  return image;
+}
+
+QImage loadTgaFallback(const QString& path) {
+  const QByteArray bytes = readFileBytes(path);
+  if (bytes.size() < 18) {
+    throw std::runtime_error("Invalid TGA header.");
+  }
+
+  const int idLength = int(byteAt(bytes, 0));
+  const int colorMapType = int(byteAt(bytes, 1));
+  const int imageType = int(byteAt(bytes, 2));
+  const int width = int(readU16(bytes, 12));
+  const int height = int(readU16(bytes, 14));
+  const int bitsPerPixel = int(byteAt(bytes, 16));
+  const quint8 descriptor = byteAt(bytes, 17);
+  if (colorMapType != 0) {
+    throw std::runtime_error("Color-mapped TGA images are not supported.");
+  }
+  if (imageType != 2 && imageType != 10) {
+    throw std::runtime_error("Unsupported TGA image type.");
+  }
+  if (bitsPerPixel != 24 && bitsPerPixel != 32) {
+    throw std::runtime_error("Unsupported TGA pixel depth.");
+  }
+  if (width <= 0 || height <= 0) {
+    throw std::runtime_error("TGA image has invalid dimensions.");
+  }
+
+  QImage image(width, height, QImage::Format_RGBA8888);
+  if (image.isNull()) {
+    throw std::runtime_error("Could not allocate image buffer.");
+  }
+
+  const int bytesPerPixel = bitsPerPixel / 8;
+  int offset = 18 + idLength;
+  const bool topOrigin = (descriptor & 0x20u) != 0u;
+  const bool rightOrigin = (descriptor & 0x10u) != 0u;
+
+  auto writePixel = [&](int linearIndex, const uchar* sourcePixel) {
+    const int sourceX = linearIndex % width;
+    const int sourceY = linearIndex / width;
+    const int targetX = rightOrigin ? (width - 1 - sourceX) : sourceX;
+    const int targetY = topOrigin ? sourceY : (height - 1 - sourceY);
+    uchar* destination = image.scanLine(targetY) + (targetX * 4);
+    destination[0] = sourcePixel[2];
+    destination[1] = sourcePixel[1];
+    destination[2] = sourcePixel[0];
+    destination[3] = bytesPerPixel == 4 ? sourcePixel[3] : 255;
+  };
+
+  const int pixelCount = width * height;
+  if (imageType == 2) {
+    const qsizetype requiredBytes = qsizetype(pixelCount) * qsizetype(bytesPerPixel);
+    if ((bytes.size() - offset) < requiredBytes) {
+      throw std::runtime_error("TGA file is truncated.");
+    }
+    const uchar* source = reinterpret_cast<const uchar*>(bytes.constData() + offset);
+    for (int pixelIndex = 0; pixelIndex < pixelCount; ++pixelIndex) {
+      writePixel(pixelIndex, source + (pixelIndex * bytesPerPixel));
+    }
+    return image;
+  }
+
+  int pixelIndex = 0;
+  while (pixelIndex < pixelCount) {
+    const quint8 packetHeader = byteAt(bytes, offset++);
+    const int runLength = int(packetHeader & 0x7fu) + 1;
+    if ((packetHeader & 0x80u) != 0u) {
+      if ((bytes.size() - offset) < bytesPerPixel) {
+        throw std::runtime_error("TGA file is truncated.");
+      }
+      const uchar* sourcePixel = reinterpret_cast<const uchar*>(bytes.constData() + offset);
+      offset += bytesPerPixel;
+      for (int count = 0; count < runLength && pixelIndex < pixelCount; ++count) {
+        writePixel(pixelIndex++, sourcePixel);
+      }
+      continue;
+    }
+
+    const qsizetype requiredBytes = qsizetype(runLength) * qsizetype(bytesPerPixel);
+    if ((bytes.size() - offset) < requiredBytes) {
+      throw std::runtime_error("TGA file is truncated.");
+    }
+    const uchar* source = reinterpret_cast<const uchar*>(bytes.constData() + offset);
+    offset += int(requiredBytes);
+    for (int count = 0; count < runLength && pixelIndex < pixelCount; ++count) {
+      writePixel(pixelIndex++, source + (count * bytesPerPixel));
+    }
+  }
+
+  return image;
+}
+
 QImage loadRgba(const QString& path) {
   QImageReader reader(path);
   QImage image = reader.read();
   if (image.isNull()) {
-    throw std::runtime_error(
-        QStringLiteral("Could not decode %1: %2").arg(path, reader.errorString()).toStdString());
+    const QString suffix = QFileInfo(path).suffix().toLower();
+    try {
+      if (suffix == QStringLiteral("dds")) {
+        return loadDdsFallback(path);
+      }
+      if (suffix == QStringLiteral("tga")) {
+        return loadTgaFallback(path);
+      }
+    } catch (const std::exception& exception) {
+      throw std::runtime_error(
+          QStringLiteral("Could not decode %1: %2").arg(path, QString::fromLocal8Bit(exception.what())).toStdString());
+    }
+    throw std::runtime_error(QStringLiteral("Could not decode %1: %2").arg(path, reader.errorString()).toStdString());
   }
   return image.convertToFormat(QImage::Format_RGBA8888);
 }
@@ -375,12 +764,21 @@ bool dedupeIdenticalOutputs(QJsonObject& item) {
   return true;
 }
 
-SourceResult processSource(const Options& options, const QString& toolPath, const QFileInfo& source) {
+SourceResult processSource(const Options& options, const QString& toolPath, const QFileInfo& source, int sourceIndex, int sourceCount) {
+  QElapsedTimer totalTimer;
+  totalTimer.start();
   const QString atlasName = source.completeBaseName();
+  const QString logPrefix =
+      QStringLiteral("%1/%2 %3").arg(sourceIndex + 1).arg(sourceCount).arg(source.fileName());
+
+  QElapsedTimer analysisTimer;
+  analysisTimer.start();
   const QImage image = loadRgba(source.absoluteFilePath());
   const QRect alphaBox = alphaBounds(image);
-  const QVector<Component> components =
-      chooseComponents(options, detectComponents(image, options.componentAlphaThreshold, options.minComponentPixels));
+  const QVector<Component> detectedComponents =
+      detectComponents(image, options.componentAlphaThreshold, options.minComponentPixels);
+  const QVector<Component> components = chooseComponents(options, detectedComponents);
+  const double analysisSeconds = double(analysisTimer.elapsed()) / 1000.0;
 
   const QString convertedDir = QDir(options.workDir).filePath(QStringLiteral("converted_png"));
   const QString requestDir = QDir(options.workDir).filePath(QStringLiteral("requests"));
@@ -396,12 +794,25 @@ SourceResult processSource(const Options& options, const QString& toolPath, cons
   const QString convertedPath = QDir(convertedDir).filePath(atlasName + QStringLiteral(".png"));
   const QString requestPath = QDir(requestDir).filePath(atlasName + QStringLiteral(".json"));
   const QString extractMetadataPath = QDir(metadataDir).filePath(atlasName + QStringLiteral(".json"));
+  const QJsonArray requestItems = buildRequestItems(atlasName, image.size(), alphaBox, components);
+  const QString extractionStrategy = components.isEmpty() ? QStringLiteral("bbox") : QStringLiteral("components");
 
   image.save(convertedPath);
   writeJson(requestPath, QJsonObject{
       {QStringLiteral("atlas_identifier"), atlasName},
-      {QStringLiteral("items"), buildRequestItems(atlasName, image.size(), alphaBox, components)},
+      {QStringLiteral("items"), requestItems},
   });
+
+  logLine(
+      QStringLiteral("INFO"),
+      QStringLiteral("%1: extracting %2 item(s) from %3x%4 atlas after %5 analysis (detected %6 component(s), strategy=%7)")
+          .arg(logPrefix)
+          .arg(requestItems.size())
+          .arg(image.width())
+          .arg(image.height())
+          .arg(formatDuration(analysisSeconds))
+          .arg(detectedComponents.size())
+          .arg(extractionStrategy));
 
   QStringList extractArguments{
       QStringLiteral("extract"),
@@ -421,8 +832,13 @@ SourceResult processSource(const Options& options, const QString& toolPath, cons
   if (!options.assetStoreDir.isEmpty()) {
     extractArguments << QStringLiteral("--asset-store") << options.assetStoreDir;
   }
+  QElapsedTimer extractTimer;
+  extractTimer.start();
   runProcess(toolPath, extractArguments);
+  const double extractSeconds = double(extractTimer.elapsed()) / 1000.0;
 
+  QElapsedTimer postprocessTimer;
+  postprocessTimer.start();
   QJsonObject extractMetadata = readJsonObject(extractMetadataPath);
   QJsonArray items = extractMetadata.value(QStringLiteral("items")).toArray();
   int deduplicatedOutputs = 0;
@@ -459,8 +875,19 @@ SourceResult processSource(const Options& options, const QString& toolPath, cons
   }
   extractMetadata.insert(QStringLiteral("items"), items);
   writeJson(extractMetadataPath, extractMetadata);
+  const double totalSeconds = double(totalTimer.elapsed()) / 1000.0;
+
+  logLine(
+      QStringLiteral("INFO"),
+      QStringLiteral("%1: finished in %2 (%3 extracted, %4 identical pairs collapsed, extract=%5)")
+          .arg(logPrefix)
+          .arg(formatDuration(totalSeconds))
+          .arg(items.size())
+          .arg(deduplicatedOutputs)
+          .arg(formatDuration(extractSeconds)));
 
   return SourceResult{
+      sourceIndex,
       QJsonObject{
           {QStringLiteral("source_image"), source.absoluteFilePath()},
           {QStringLiteral("converted_png"), convertedPath},
@@ -468,12 +895,22 @@ SourceResult processSource(const Options& options, const QString& toolPath, cons
           {QStringLiteral("extract_metadata_json"), extractMetadataPath},
           {QStringLiteral("width"), image.width()},
           {QStringLiteral("height"), image.height()},
+          {QStringLiteral("detected_component_count"), detectedComponents.size()},
+          {QStringLiteral("extraction_strategy"), extractionStrategy},
+          {QStringLiteral("timing_seconds"),
+           QJsonObject{
+               {QStringLiteral("analysis"), analysisSeconds},
+               {QStringLiteral("extract"), extractSeconds},
+               {QStringLiteral("postprocess"), double(postprocessTimer.elapsed()) / 1000.0},
+               {QStringLiteral("total"), totalSeconds},
+           }},
           {QStringLiteral("items"), summaryItems},
       },
       packItems,
       duplicateEntries,
       static_cast<int>(items.size()),
       deduplicatedOutputs,
+      totalSeconds,
   };
 }
 
@@ -616,9 +1053,8 @@ QPair<QHash<QString, QString>, QSet<QString>> loadReviewDecisions(const QString&
   while (iterator.hasNext()) {
     const QString decisionPath = iterator.next();
     const QJsonObject payload = readJsonObject(decisionPath);
-    for (auto aliasIt = payload.value(QStringLiteral("aliases")).toObject().begin();
-         aliasIt != payload.value(QStringLiteral("aliases")).toObject().end();
-         ++aliasIt) {
+    const QJsonObject payloadAliases = payload.value(QStringLiteral("aliases")).toObject();
+    for (auto aliasIt = payloadAliases.begin(); aliasIt != payloadAliases.end(); ++aliasIt) {
       aliases.insert(aliasIt.key(), aliasIt.value().toString());
     }
     for (const QJsonValue& pairValue : payload.value(QStringLiteral("distinct_pairs")).toArray()) {
@@ -753,10 +1189,16 @@ void linkOrCopy(const QString& source, const QString& destination) {
   if (QFileInfo::exists(destination)) {
     QFile::remove(destination);
   }
-  QFile sourceFile(source);
-  if (!sourceFile.link(destination)) {
-    QFile::copy(source, destination);
+#ifdef Q_OS_WIN
+  if (!QFile::copy(source, destination)) {
+    throw std::runtime_error(QStringLiteral("Could not copy %1 to %2").arg(source, destination).toStdString());
   }
+#else
+  QFile sourceFile(source);
+  if (!sourceFile.link(destination) && !QFile::copy(source, destination)) {
+    throw std::runtime_error(QStringLiteral("Could not copy %1 to %2").arg(source, destination).toStdString());
+  }
+#endif
 }
 
 void createContactSheet(const QJsonArray& members, const QString& outputPath) {
@@ -802,6 +1244,12 @@ QString makeReviewGroupId(const QStringList& logicalIds, const QString& represen
   return QStringLiteral("group__%1_items__%2__%3")
       .arg(logicalIds.size(), 2, 10, QLatin1Char('0'))
       .arg(sanitizeName(representativeName), logicalIds.front());
+}
+
+QString makeReviewImageFileName(int index, const QString& representativeName) {
+  return QStringLiteral("%1__%2.png")
+      .arg(index + 1, 2, 10, QLatin1Char('0'))
+      .arg(sanitizeName(representativeName).left(24));
 }
 
 QStringList buildReviewGroupsFromCandidatePairs(
@@ -967,6 +1415,7 @@ QJsonObject materializeReviewCandidates(
   for (const QString& groupKey : reviewGroupKeys) {
     const QStringList logicalIds = groupKey.split(QLatin1Char('\t'));
     const QString groupName = makeReviewGroupId(logicalIds, logicalGroupById.value(logicalIds.front()).representativeName);
+    logLine(QStringLiteral("INFO"), QStringLiteral("Preparing review group %1").arg(groupName));
     const QString groupDir = QDir(groupsDir).filePath(groupName);
     const QString imagesDir = QDir(groupDir).filePath(QStringLiteral("images"));
     QDir().mkpath(imagesDir);
@@ -980,8 +1429,7 @@ QJsonObject materializeReviewCandidates(
       const QString sourceLogicalImage = QDir(logicalStoreDir).filePath(QStringLiteral("images/%1.png").arg(group.logicalId));
       QString reviewImagePath;
       if (QFileInfo::exists(sourceLogicalImage)) {
-        reviewImagePath = QDir(imagesDir).filePath(
-            QStringLiteral("%1__%2__%3.png").arg(index + 1, 2, 10, QLatin1Char('0')).arg(sanitizeName(group.representativeName), group.logicalId));
+        reviewImagePath = QDir(imagesDir).filePath(makeReviewImageFileName(index, group.representativeName));
         linkOrCopy(sourceLogicalImage, reviewImagePath);
         ++exportedImageCount;
       }
@@ -1004,13 +1452,13 @@ QJsonObject materializeReviewCandidates(
     }
 
     const QString contactSheetPath = QDir(groupDir).filePath(QStringLiteral("contact_sheet.png"));
+    logLine(QStringLiteral("INFO"), QStringLiteral("Creating contact sheet for %1").arg(groupName));
     createContactSheet(memberRecords, contactSheetPath);
 
     QJsonObject decision = preservedDecisions.value(groupName);
     QJsonObject filteredAliases;
-    for (auto aliasIt = decision.value(QStringLiteral("aliases")).toObject().begin();
-         aliasIt != decision.value(QStringLiteral("aliases")).toObject().end();
-         ++aliasIt) {
+    const QJsonObject decisionAliases = decision.value(QStringLiteral("aliases")).toObject();
+    for (auto aliasIt = decisionAliases.begin(); aliasIt != decisionAliases.end(); ++aliasIt) {
       if (logicalIds.contains(aliasIt.key()) && logicalIds.contains(aliasIt.value().toString()) && aliasIt.key() != aliasIt.value().toString()) {
         filteredAliases.insert(aliasIt.key(), aliasIt.value().toString());
       }
@@ -1142,6 +1590,7 @@ Options parseOptions(const QStringList& arguments) {
       {{QStringLiteral("similarity-auto-max-aspect-ratio-delta")}, QStringLiteral("Auto aspect ratio delta."), QStringLiteral("value"), QStringLiteral("0.10")},
       {{QStringLiteral("similarity-auto-min-dimension-ratio")}, QStringLiteral("Auto min dimension ratio."), QStringLiteral("value"), QStringLiteral("0.90")},
       {{QStringLiteral("similarity-report-max-pairs")}, QStringLiteral("Report max pairs."), QStringLiteral("value"), QStringLiteral("500")},
+      {{QStringLiteral("jobs")}, QStringLiteral("Number of source images to process concurrently."), QStringLiteral("value"), QStringLiteral("0")},
   };
   parser.addOptions(options);
   parser.process(arguments);
@@ -1168,6 +1617,7 @@ Options parseOptions(const QStringList& arguments) {
   optionsValue.similarityAutoMaxAspectRatioDelta = parser.value(QStringLiteral("similarity-auto-max-aspect-ratio-delta")).toDouble();
   optionsValue.similarityAutoMinDimensionRatio = parser.value(QStringLiteral("similarity-auto-min-dimension-ratio")).toDouble();
   optionsValue.similarityReportMaxPairs = parser.value(QStringLiteral("similarity-report-max-pairs")).toInt();
+  optionsValue.jobs = parser.value(QStringLiteral("jobs")).toInt();
   if (optionsValue.assetStoreDir.isEmpty()) {
     optionsValue.assetStoreDir = QDir(optionsValue.workDir).filePath(QStringLiteral("fixture_asset_store"));
   }
@@ -1181,6 +1631,8 @@ Options parseOptions(const QStringList& arguments) {
 
 int PipelineRunner::run(const QStringList& arguments) {
   try {
+    QElapsedTimer totalTimer;
+    totalTimer.start();
     const Options options = parseOptions(arguments);
     if (options.inputDir.isEmpty() || options.workDir.isEmpty()) {
       throw std::runtime_error("Both --input-dir and --work-dir are required.");
@@ -1199,13 +1651,66 @@ int PipelineRunner::run(const QStringList& arguments) {
     QDir().mkpath(options.workDir);
     QDir().mkpath(options.logicalStoreDir);
 
+    const int workerCount = resolveJobCount(options.jobs, sources.size());
+    logLine(
+        QStringLiteral("INFO"),
+        QStringLiteral("Processing %1 source image(s) with %2 worker(s).").arg(sources.size()).arg(workerCount));
+
+    QElapsedTimer sourceStageTimer;
+    sourceStageTimer.start();
+    const int progressInterval = sources.size() <= 20 ? 1 : 25;
+    std::atomic<int> nextSourceIndex{0};
+    std::atomic<int> completedCount{0};
+    std::atomic<bool> stopRequested{false};
+    std::mutex exceptionMutex;
+    std::exception_ptr workerException;
+    std::vector<std::optional<SourceResult>> sourceResults(size_t(sources.size()));
+    std::vector<std::thread> workers;
+    workers.reserve(size_t(workerCount));
+
+    auto worker = [&]() {
+      while (!stopRequested.load()) {
+        const int sourceIndex = nextSourceIndex.fetch_add(1);
+        if (sourceIndex >= sources.size()) {
+          break;
+        }
+        try {
+          sourceResults[size_t(sourceIndex)] = processSource(options, toolPath, sources.at(sourceIndex), sourceIndex, sources.size());
+          const int completed = completedCount.fetch_add(1) + 1;
+          if (completed == sources.size() || completed % progressInterval == 0) {
+            logLine(QStringLiteral("INFO"), QStringLiteral("Completed %1/%2 source image(s).").arg(completed).arg(sources.size()));
+          }
+        } catch (...) {
+          {
+            std::lock_guard<std::mutex> lock(exceptionMutex);
+            if (!workerException) {
+              workerException = std::current_exception();
+            }
+          }
+          stopRequested.store(true);
+          break;
+        }
+      }
+    };
+
+    for (int workerIndex = 0; workerIndex < workerCount; ++workerIndex) {
+      workers.emplace_back(worker);
+    }
+    for (std::thread& thread : workers) {
+      if (thread.joinable()) {
+        thread.join();
+      }
+    }
+    if (workerException) {
+      std::rethrow_exception(workerException);
+    }
+
     QJsonArray summaryFixtures;
     QHash<QString, QStringList> duplicateGroups;
     int totalExtractions = 0;
     int deduplicatedOutputs = 0;
-    for (const QFileInfo& source : sources) {
-      logLine(QStringLiteral("INFO"), QStringLiteral("Processing %1").arg(source.fileName()));
-      const SourceResult result = processSource(options, toolPath, source);
+    for (int sourceIndex = 0; sourceIndex < sources.size(); ++sourceIndex) {
+      const SourceResult& result = sourceResults[size_t(sourceIndex)].value();
       summaryFixtures.append(result.summaryItem);
       totalExtractions += result.extractionCount;
       deduplicatedOutputs += result.deduplicatedOutputs;
@@ -1213,6 +1718,7 @@ int PipelineRunner::run(const QStringList& arguments) {
         duplicateGroups[duplicateEntry.first].push_back(duplicateEntry.second);
       }
     }
+    const double sourceStageSeconds = double(sourceStageTimer.elapsed()) / 1000.0;
 
     const QString metadataDir = QDir(options.workDir).filePath(QStringLiteral("metadata"));
     QDir().mkpath(metadataDir);
@@ -1224,6 +1730,7 @@ int PipelineRunner::run(const QStringList& arguments) {
     writeJson(similaritySourceMapPath, sourceMap);
 
     const QString similarityReportPath = QDir(metadataDir).filePath(QStringLiteral("similarity_report.json"));
+    logLine(QStringLiteral("INFO"), QStringLiteral("Building similarity report"));
     runProcess(toolPath, {
                              QStringLiteral("similarity-report"),
                              QStringLiteral("--metadata-dir"),
@@ -1255,9 +1762,11 @@ int PipelineRunner::run(const QStringList& arguments) {
     const auto [aliasedGroups, appliedAliases] = applyReviewAliases(logicalGroups, reviewAliases);
     logicalGroups = aliasedGroups;
     const QSet<QString> normalizedDistinctPairs = normalizeDistinctPairs(logicalGroups, reviewDistinctPairs, appliedAliases);
+    logLine(QStringLiteral("INFO"), QStringLiteral("Materializing logical store for %1 logical texture(s).").arg(logicalGroups.size()));
     const auto [logicalPackItems, logicalGroupMetadata] = materializeLogicalStore(logicalGroups, options.logicalStoreDir);
     writeJson(QDir(options.logicalStoreDir).filePath(QStringLiteral("metadata/logical_groups.json")),
               QJsonObject{{QStringLiteral("logical_groups"), logicalGroupMetadata}});
+    logLine(QStringLiteral("INFO"), QStringLiteral("Materializing review candidates"));
     const QJsonObject reviewManifest = materializeReviewCandidates(similarityReport, logicalGroups, options.logicalStoreDir, normalizedDistinctPairs);
 
     const QString packManifestPath = QDir(metadataDir).filePath(QStringLiteral("pack_manifest.json"));
@@ -1269,7 +1778,28 @@ int PipelineRunner::run(const QStringList& arguments) {
 
     const QString packDir = QDir(options.workDir).filePath(QStringLiteral("packed"));
     const QString packMetadataPath = QDir(metadataDir).filePath(QStringLiteral("packed.json"));
+    int effectiveMaxWidth = options.maxWidth;
+    int effectiveMaxHeight = options.maxHeight;
     if (!logicalPackItems.isEmpty()) {
+      const PackInputAnalysis packInputAnalysis = analyzePackInputs(logicalPackItems, options.padding);
+      effectiveMaxWidth = std::max(options.maxWidth, packInputAnalysis.requiredWidth);
+      effectiveMaxHeight = std::max(options.maxHeight, packInputAnalysis.requiredHeight);
+      if (effectiveMaxWidth != options.maxWidth || effectiveMaxHeight != options.maxHeight) {
+        logLine(
+            QStringLiteral("WARN"),
+            QStringLiteral("Increased pack atlas size from %1x%2 to %3x%4 to fit oversized logical image(s) once padding is applied.")
+                .arg(options.maxWidth)
+                .arg(options.maxHeight)
+                .arg(effectiveMaxWidth)
+                .arg(effectiveMaxHeight));
+      }
+      logLine(
+          QStringLiteral("INFO"),
+          QStringLiteral("Packing %1 logical image(s) with max atlas size %2x%3 and padding %4.")
+              .arg(logicalPackItems.size())
+              .arg(effectiveMaxWidth)
+              .arg(effectiveMaxHeight)
+              .arg(options.padding));
       runProcess(toolPath, {
                                QStringLiteral("pack"),
                                QStringLiteral("--manifest"),
@@ -1281,9 +1811,9 @@ int PipelineRunner::run(const QStringList& arguments) {
                                QStringLiteral("--atlas-prefix"),
                                QStringLiteral("fixtures"),
                                QStringLiteral("--max-width"),
-                               QString::number(options.maxWidth),
+                               QString::number(effectiveMaxWidth),
                                QStringLiteral("--max-height"),
-                               QString::number(options.maxHeight),
+                               QString::number(effectiveMaxHeight),
                                QStringLiteral("--padding"),
                                QString::number(options.padding),
                                QStringLiteral("--origin"),
@@ -1315,10 +1845,20 @@ int PipelineRunner::run(const QStringList& arguments) {
                   {QStringLiteral("input_dir"), options.inputDir},
                   {QStringLiteral("work_dir"), options.workDir},
                   {QStringLiteral("logical_store_dir"), options.logicalStoreDir},
+                  {QStringLiteral("worker_count"), workerCount},
                   {QStringLiteral("source_count"), sources.size()},
                   {QStringLiteral("extraction_count"), totalExtractions},
                   {QStringLiteral("logical_texture_count"), logicalGroups.size()},
                   {QStringLiteral("deduplicated_identical_output_count"), deduplicatedOutputs},
+                  {QStringLiteral("requested_pack_max_width"), options.maxWidth},
+                  {QStringLiteral("requested_pack_max_height"), options.maxHeight},
+                  {QStringLiteral("effective_pack_max_width"), effectiveMaxWidth},
+                  {QStringLiteral("effective_pack_max_height"), effectiveMaxHeight},
+                  {QStringLiteral("timing_seconds"),
+                   QJsonObject{
+                       {QStringLiteral("source_processing"), sourceStageSeconds},
+                       {QStringLiteral("total"), double(totalTimer.elapsed()) / 1000.0},
+                   }},
                   {QStringLiteral("duplicate_exact_ids"), duplicateSummary},
                   {QStringLiteral("review_candidate_manifest_json"), QDir(options.logicalStoreDir).filePath(QStringLiteral("review_candidates/review_groups.json"))},
                   {QStringLiteral("similarity_report_json"), similarityReportPath},
@@ -1326,9 +1866,10 @@ int PipelineRunner::run(const QStringList& arguments) {
                   {QStringLiteral("review_manifest"), reviewManifest},
               });
 
-    logLine(QStringLiteral("INFO"), QStringLiteral("Processed %1 source image(s) into %2 extracted item(s).")
+    logLine(QStringLiteral("INFO"), QStringLiteral("Processed %1 source image(s) into %2 extracted item(s) in %3.")
                                       .arg(sources.size())
-                                      .arg(totalExtractions));
+                                      .arg(totalExtractions)
+                                      .arg(formatDuration(double(totalTimer.elapsed()) / 1000.0)));
     return 0;
   } catch (const std::exception& exception) {
     QTextStream(stderr) << "error: " << exception.what() << Qt::endl;
