@@ -74,6 +74,7 @@ struct LogicalGroup {
   QString representativeExactId;
   QString representativeName;
   QString representativeSourceImage;
+  QString representativeSourceFileName;
   QString representativeTrimmedImage;
   QStringList memberExactIds;
   int occurrenceCount = 0;
@@ -104,6 +105,10 @@ QString executableName(const QString& baseName) {
 #else
   return baseName;
 #endif
+}
+
+QString sourceFileName(const QString& path) {
+  return QFileInfo(path).fileName();
 }
 
 QString nowStamp() {
@@ -980,6 +985,7 @@ QList<LogicalGroup> buildLogicalGroups(const QList<OccurrenceRecord>& occurrence
         representativeExactId,
         memberOccurrences.front().itemName,
         memberOccurrences.front().sourceImage,
+        sourceFileName(memberOccurrences.front().sourceImage),
         memberOccurrences.front().trimmedImage,
         exactIds,
         static_cast<int>(memberOccurrences.size()),
@@ -1017,6 +1023,7 @@ QList<LogicalGroup> buildLogicalGroups(const QList<OccurrenceRecord>& occurrence
         exactId,
         exactOccurrences.front().itemName,
         exactOccurrences.front().sourceImage,
+        sourceFileName(exactOccurrences.front().sourceImage),
         exactOccurrences.front().trimmedImage,
         QStringList{exactId},
         static_cast<int>(exactOccurrences.size()),
@@ -1136,6 +1143,7 @@ QPair<QList<LogicalGroup>, QHash<QString, QString>> applyReviewAliases(
         rootGroup.representativeExactId,
         rootGroup.representativeName,
         rootGroup.representativeSourceImage,
+        rootGroup.representativeSourceFileName,
         rootGroup.representativeTrimmedImage,
         sortedUnique(memberExactIds),
         occurrenceCount,
@@ -1345,6 +1353,7 @@ QPair<QList<QJsonObject>, QJsonArray> materializeLogicalStore(
         {QStringLiteral("representative_exact_id"), group.representativeExactId},
         {QStringLiteral("representative_name"), group.representativeName},
         {QStringLiteral("representative_source_image"), group.representativeSourceImage},
+        {QStringLiteral("representative_source_file_name"), group.representativeSourceFileName},
         {QStringLiteral("representative_trimmed_image"), group.representativeTrimmedImage},
         {QStringLiteral("logical_image"), QFileInfo::exists(imagePath) ? imagePath : QString()},
         {QStringLiteral("logical_image_existed_before_run"), existedBeforeRun},
@@ -1438,6 +1447,7 @@ QJsonObject materializeReviewCandidates(
           {QStringLiteral("representative_name"), group.representativeName},
           {QStringLiteral("representative_exact_id"), group.representativeExactId},
           {QStringLiteral("representative_source_image"), group.representativeSourceImage},
+          {QStringLiteral("representative_source_file_name"), group.representativeSourceFileName},
           {QStringLiteral("review_image"), reviewImagePath},
           {QStringLiteral("member_exact_ids"), QJsonArray::fromStringList(group.memberExactIds)},
           {QStringLiteral("occurrence_count"), group.occurrenceCount},

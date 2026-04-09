@@ -50,6 +50,8 @@ QVariant ReviewMemberModel::data(const QModelIndex& index, int role) const {
       return member.representativeExactId;
     case RepresentativeSourceImageRole:
       return member.representativeSourceImage;
+    case RepresentativeSourceFileNameRole:
+      return member.representativeSourceFileName;
     case ReviewImageUrlRole:
       return member.reviewImagePath.isEmpty()
                  ? QVariant{}
@@ -120,6 +122,7 @@ QHash<int, QByteArray> ReviewMemberModel::roleNames() const {
       {RepresentativeNameRole, "representativeName"},
       {RepresentativeExactIdRole, "representativeExactId"},
       {RepresentativeSourceImageRole, "representativeSourceImage"},
+      {RepresentativeSourceFileNameRole, "representativeSourceFileName"},
       {ReviewImageUrlRole, "reviewImageUrl"},
       {OccurrenceCountRole, "occurrenceCount"},
       {ClusterIndexRole, "clusterIndex"},

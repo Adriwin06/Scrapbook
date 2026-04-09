@@ -27,7 +27,6 @@ ApplicationWindow {
     readonly property string bodyFont: Qt.platform.os === "windows" ? "Segoe UI Variable Text" : "Noto Sans"
     readonly property string monoFont: Qt.platform.os === "windows" ? "Cascadia Mono" : "Noto Sans Mono"
     property int activePageIndex: 0
-    property bool logDockExpanded: true
     property bool pathsPanelExpanded: true
     property bool configPanelExpanded: true
     property bool workspacePanelExpanded: true
@@ -747,12 +746,6 @@ ApplicationWindow {
     }
 
     Action {
-        id: toggleOutputDockAction
-        text: logDockExpanded ? "Hide output dock" : "Show output dock"
-        onTriggered: logDockExpanded = !logDockExpanded
-    }
-
-    Action {
         id: togglePipelineSectionsAction
         text: allPipelinePanelsExpanded ? "Collapse pipeline sections" : "Expand pipeline sections"
         onTriggered: setPipelinePanelsExpanded(!allPipelinePanelsExpanded)
@@ -856,7 +849,6 @@ ApplicationWindow {
                             DarkMenuItem { action: showPipelineWorkspaceAction }
                             DarkMenuItem { action: showReviewWorkspaceAction }
                             MenuSeparator {}
-                            DarkMenuItem { action: toggleOutputDockAction }
                             DarkMenuItem { action: togglePipelineSectionsAction }
                         }
 
@@ -978,15 +970,14 @@ ApplicationWindow {
             }
         }
 
-        SplitView {
+        ColumnLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true
-            orientation: Qt.Vertical
-            handle: SplitHandle {}
+            spacing: 14
 
             Item {
-                SplitView.fillWidth: true
-                SplitView.fillHeight: true
+                Layout.fillWidth: true
+                Layout.fillHeight: true
 
                 SplitView {
                     anchors.fill: parent
@@ -1279,19 +1270,33 @@ ApplicationWindow {
                         ColumnLayout {
                             anchors.fill: parent
                             anchors.margins: 22
-                            spacing: 16
+                            spacing: 14
 
-                            Text {
-                                text: "Pipeline workspace"
-                                color: textPrimary
-                                font.family: uiFont
-                                font.pixelSize: 28
-                                font.weight: Font.DemiBold
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 12
+
+                                Text {
+                                    text: "Pipeline workspace"
+                                    color: textPrimary
+                                    font.family: uiFont
+                                    font.pixelSize: 28
+                                    font.weight: Font.DemiBold
+                                }
+
+                                Item { Layout.fillWidth: true }
+
+                                Text {
+                                    text: pipelineController.status
+                                    color: textMuted
+                                    font.family: bodyFont
+                                    font.pixelSize: 14
+                                }
                             }
 
                             Text {
                                 Layout.fillWidth: true
-                                text: "Keep configuration on the Pipeline page, use the bottom output dock for live diagnostics, and switch to Review once candidate groups appear."
+                                text: "Run the pipeline from the left panel. Live output is shown below."
                                 color: textMuted
                                 font.family: bodyFont
                                 font.pixelSize: 14
@@ -1304,203 +1309,146 @@ ApplicationWindow {
 
                                 InsetSurface {
                                     Layout.fillWidth: true
-                                    implicitHeight: 120
+                                    implicitHeight: 88
 
                                     ColumnLayout {
                                         anchors.fill: parent
                                         anchors.margins: 16
-                                        spacing: 8
+                                        spacing: 6
 
                                         SectionLabel { text: "Status" }
+
                                         Text {
                                             Layout.fillWidth: true
                                             text: pipelineController.status
                                             color: textPrimary
                                             font.family: uiFont
-                                            font.pixelSize: 24
+                                            font.pixelSize: 22
                                             font.weight: Font.DemiBold
-                                            wrapMode: Text.Wrap
-                                        }
-                                        Text {
-                                            Layout.fillWidth: true
-                                            text: pipelineController.pipelineRunning ? "The runner is active. Watch the output dock for progress." : "Ready for the next run."
-                                            color: textMuted
-                                            font.family: bodyFont
-                                            font.pixelSize: 13
-                                            wrapMode: Text.Wrap
+                                            elide: Text.ElideRight
                                         }
                                     }
                                 }
 
                                 InsetSurface {
-                                    Layout.fillWidth: true
-                                    implicitHeight: 120
+                                    Layout.preferredWidth: 220
+                                    implicitHeight: 88
 
                                     ColumnLayout {
                                         anchors.fill: parent
                                         anchors.margins: 16
-                                        spacing: 8
+                                        spacing: 6
 
                                         SectionLabel { text: "Review groups" }
+
                                         Text {
                                             Layout.fillWidth: true
                                             text: String(pipelineController.reviewGroupModel.count)
                                             color: textPrimary
                                             font.family: uiFont
-                                            font.pixelSize: 24
+                                            font.pixelSize: 22
                                             font.weight: Font.DemiBold
-                                        }
-                                        Text {
-                                            Layout.fillWidth: true
-                                            text: pipelineController.reviewGroupModel.count > 0
-                                                ? "Candidate groups are ready for inspection."
-                                                : "No unresolved groups are currently loaded."
-                                            color: textMuted
-                                            font.family: bodyFont
-                                            font.pixelSize: 13
-                                            wrapMode: Text.Wrap
+                                            elide: Text.ElideRight
                                         }
                                     }
                                 }
 
                                 InsetSurface {
-                                    Layout.fillWidth: true
-                                    implicitHeight: 120
+                                    Layout.preferredWidth: 220
+                                    implicitHeight: 88
 
                                     ColumnLayout {
                                         anchors.fill: parent
                                         anchors.margins: 16
-                                        spacing: 8
+                                        spacing: 6
 
-                                        SectionLabel { text: "Current mode" }
+                                        SectionLabel { text: "Mode" }
+
                                         Text {
                                             Layout.fillWidth: true
                                             text: pipelineController.splitMode + " / " + pipelineController.config
                                             color: textPrimary
                                             font.family: uiFont
-                                            font.pixelSize: 24
+                                            font.pixelSize: 22
                                             font.weight: Font.DemiBold
-                                        }
-                                        Text {
-                                            Layout.fillWidth: true
-                                            text: "Split strategy and build configuration for the next run."
-                                            color: textMuted
-                                            font.family: bodyFont
-                                            font.pixelSize: 13
-                                            wrapMode: Text.Wrap
+                                            elide: Text.ElideRight
                                         }
                                     }
                                 }
                             }
 
-                            SplitView {
+                            InsetSurface {
                                 Layout.fillWidth: true
                                 Layout.fillHeight: true
-                                orientation: Qt.Horizontal
-                                handle: SplitHandle {}
 
-                                InsetSurface {
-                                    SplitView.fillWidth: true
-                                    SplitView.fillHeight: true
+                                ColumnLayout {
+                                    anchors.fill: parent
+                                    anchors.margins: 16
+                                    spacing: 10
 
-                                    ColumnLayout {
-                                        anchors.fill: parent
-                                        anchors.margins: 18
-                                        spacing: 12
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        spacing: 10
 
                                         Text {
-                                            text: "Workflow"
+                                            text: "Pipeline log"
                                             color: textPrimary
                                             font.family: uiFont
-                                            font.pixelSize: 22
+                                            font.pixelSize: 20
                                             font.weight: Font.DemiBold
                                         }
 
-                                        Text {
-                                            Layout.fillWidth: true
-                                            text: "1. Configure paths and split mode. 2. Run the pipeline. 3. Switch to Review. 4. Merge or split candidate groups. 5. Save decisions and rerun until the queue is empty."
-                                            color: textMuted
-                                            font.family: bodyFont
-                                            font.pixelSize: 14
-                                            wrapMode: Text.Wrap
-                                        }
-
-                                        Rectangle { Layout.fillWidth: true; height: 1; color: edge }
+                                        Item { Layout.fillWidth: true }
 
                                         Text {
-                                            Layout.fillWidth: true
-                                            text: "All live output is in the bottom dock, which you can collapse when you need more workspace."
+                                            text: pipelineController.pipelineRunning ? "Live output" : "Latest run"
                                             color: textFaint
                                             font.family: bodyFont
                                             font.pixelSize: 13
-                                            wrapMode: Text.Wrap
                                         }
                                     }
-                                }
 
-                                InsetSurface {
-                                    SplitView.preferredWidth: 340
-                                    SplitView.minimumWidth: 280
-                                    SplitView.fillHeight: true
+                                    Rectangle {
+                                        Layout.fillWidth: true
+                                        Layout.fillHeight: true
+                                        radius: 14
+                                        color: panelInset
+                                        border.color: edge
+                                        border.width: 1
 
-                                    ColumnLayout {
-                                        anchors.fill: parent
-                                        anchors.margins: 18
-                                        spacing: 12
+                                        ScrollView {
+                                            id: pipelineLogScroll
+                                            anchors.fill: parent
+                                            anchors.margins: 1
+                                            clip: true
+                                            ScrollBar.vertical: RailScrollBar {}
+                                            ScrollBar.horizontal: RailScrollBar {}
 
-                                        Text {
-                                            text: "Session"
-                                            color: textPrimary
-                                            font.family: uiFont
-                                            font.pixelSize: 22
-                                            font.weight: Font.DemiBold
-                                        }
+                                            TextArea {
+                                                id: pipelineLogOutput
+                                                width: Math.max(pipelineLogScroll.availableWidth, implicitWidth)
+                                                color: textPrimary
+                                                font.family: monoFont
+                                                font.pixelSize: 13
+                                                readOnly: true
+                                                selectByMouse: true
+                                                persistentSelection: true
+                                                padding: 14
+                                                wrapMode: TextEdit.NoWrap
+                                                placeholderText: "Pipeline output will appear here."
+                                                placeholderTextColor: textFaint
+                                                text: pipelineController.logText
+                                                background: Rectangle {
+                                                    color: panelInset
+                                                }
 
-                                        Text {
-                                            Layout.fillWidth: true
-                                            text: "Workspace root"
-                                            color: textFaint
-                                            font.family: bodyFont
-                                            font.pixelSize: 12
-                                        }
-
-                                        Text {
-                                            Layout.fillWidth: true
-                                            text: pipelineController.workspaceRoot
-                                            color: textMuted
-                                            font.family: monoFont
-                                            font.pixelSize: 12
-                                            wrapMode: Text.WrapAnywhere
-                                        }
-
-                                        Rectangle { Layout.fillWidth: true; height: 1; color: edge }
-
-                                        Text {
-                                            Layout.fillWidth: true
-                                            text: "Review queue"
-                                            color: textFaint
-                                            font.family: bodyFont
-                                            font.pixelSize: 12
-                                        }
-
-                                        Text {
-                                            Layout.fillWidth: true
-                                            text: pipelineController.reviewGroupModel.count + " unresolved groups ready for review."
-                                            color: textMuted
-                                            font.family: bodyFont
-                                            font.pixelSize: 13
-                                            wrapMode: Text.Wrap
-                                        }
-
-                                        Rectangle { Layout.fillWidth: true; height: 1; color: edge }
-
-                                        Text {
-                                            Layout.fillWidth: true
-                                            text: "Top menus hold run, review, and quick actions. Use the dock below for output and the tabs above to change workspace."
-                                            color: textFaint
-                                            font.family: bodyFont
-                                            font.pixelSize: 13
-                                            wrapMode: Text.Wrap
+                                                onTextChanged: {
+                                                    cursorPosition = length
+                                                    if (parent && parent.contentItem) {
+                                                        parent.contentItem.contentY = Math.max(0, parent.contentItem.contentHeight - parent.contentItem.height)
+                                                    }
+                                                }
+                                            }
                                         }
                                     }
                                 }
@@ -1731,6 +1679,7 @@ ApplicationWindow {
                                     required property string logicalId
                                     required property string representativeName
                                     required property string representativeExactId
+                                    required property string representativeSourceFileName
                                     required property url reviewImageUrl
                                     required property int occurrenceCount
                                     required property int clusterIndex
@@ -1806,7 +1755,7 @@ ApplicationWindow {
 
                                             Text {
                                                 Layout.fillWidth: true
-                                                text: logicalId
+                                                text: representativeSourceFileName.length > 0 ? representativeSourceFileName : logicalId
                                                 color: textMuted
                                                 font.family: monoFont
                                                 font.pixelSize: 12
@@ -1907,85 +1856,6 @@ ApplicationWindow {
                 }
             }
 
-            Surface {
-                SplitView.fillWidth: true
-                SplitView.preferredHeight: logDockExpanded ? 300 : 68
-                SplitView.minimumHeight: logDockExpanded ? 68 : 68
-                SplitView.maximumHeight: logDockExpanded ? 420 : 68
-
-                ColumnLayout {
-                    anchors.fill: parent
-                    anchors.margins: 18
-                    spacing: 12
-
-                RowLayout {
-                    Layout.fillWidth: true
-
-                    Text {
-                        text: "Pipeline log"
-                        color: textPrimary
-                        font.family: uiFont
-                        font.pixelSize: 22
-                        font.weight: Font.DemiBold
-                    }
-
-                    Item { Layout.fillWidth: true }
-
-                    Text {
-                        text: pipelineController.pipelineRunning ? "Live output" : "Latest run"
-                        color: textFaint
-                        font.family: bodyFont
-                        font.pixelSize: 13
-                    }
-
-                    MonoButton {
-                        text: logDockExpanded ? "Collapse" : "Expand"
-                        onClicked: logDockExpanded = !logDockExpanded
-                    }
-                }
-
-                InsetSurface {
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    visible: logDockExpanded
-
-                    ScrollView {
-                        id: pipelineLogScroll
-                        anchors.fill: parent
-                        anchors.margins: 1
-                        clip: true
-                        ScrollBar.vertical: RailScrollBar {}
-                        ScrollBar.horizontal: RailScrollBar {}
-
-                        TextArea {
-                            id: pipelineLogOutput
-                            width: Math.max(pipelineLogScroll.availableWidth, implicitWidth)
-                            color: textPrimary
-                            font.family: monoFont
-                            font.pixelSize: 13
-                            readOnly: true
-                            selectByMouse: true
-                            persistentSelection: true
-                            padding: 14
-                            wrapMode: TextEdit.NoWrap
-                            placeholderText: "Pipeline output will appear here."
-                            placeholderTextColor: textFaint
-                            text: pipelineController.logText
-                            background: Rectangle {
-                                color: panelInset
-                            }
-
-                            onTextChanged: {
-                                cursorPosition = length
-                                if (parent && parent.contentItem) {
-                                    parent.contentItem.contentY = Math.max(0, parent.contentItem.contentHeight - parent.contentItem.height)
-                                }
-                            }
-                        }
-                    }
-                }
-                }
-            }
         }
     }
 }

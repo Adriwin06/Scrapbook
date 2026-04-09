@@ -620,6 +620,10 @@ void FixturePipelineController::applyCurrentGroup(
     member.representativeName = object.value(QStringLiteral("representative_name")).toString();
     member.representativeExactId = object.value(QStringLiteral("representative_exact_id")).toString();
     member.representativeSourceImage = object.value(QStringLiteral("representative_source_image")).toString();
+    member.representativeSourceFileName = object.value(QStringLiteral("representative_source_file_name")).toString();
+    if (member.representativeSourceFileName.isEmpty() && !member.representativeSourceImage.isEmpty()) {
+      member.representativeSourceFileName = QFileInfo(member.representativeSourceImage).fileName();
+    }
     member.reviewImagePath = object.value(QStringLiteral("review_image")).toString();
     member.memberExactIds = stringListFromJson(object.value(QStringLiteral("member_exact_ids")));
     member.occurrenceCount = object.value(QStringLiteral("occurrence_count")).toInt();

@@ -8,6 +8,7 @@ struct ReviewMemberItem {
   QString representativeName;
   QString representativeExactId;
   QString representativeSourceImage;
+  QString representativeSourceFileName;
   QString reviewImagePath;
   QStringList memberExactIds;
   int occurrenceCount = 0;
@@ -29,6 +30,7 @@ public:
     RepresentativeNameRole,
     RepresentativeExactIdRole,
     RepresentativeSourceImageRole,
+    RepresentativeSourceFileNameRole,
     ReviewImageUrlRole,
     OccurrenceCountRole,
     ClusterIndexRole,
