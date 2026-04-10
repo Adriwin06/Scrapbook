@@ -1057,11 +1057,18 @@ ApplicationWindow {
                         }
 
                         CollapsiblePanel {
+                            id: configurationPanel
                             Layout.fillWidth: true
                             title: "Configuration"
-                            subtitle: "Build config, split strategy, and similarity budget."
+                            subtitle: "Build config, UV detection mode, and similarity thresholds."
                             expanded: window.configPanelExpanded
                             onExpandedChanged: window.configPanelExpanded = expanded
+
+                            property var splitModeOptions: [
+                                { label: "All components", value: "components" },
+                                { label: "Auto (conservative)", value: "auto" },
+                                { label: "Single bounds", value: "bbox" }
+                            ]
 
                             RowLayout {
                                 Layout.fillWidth: true
@@ -1082,12 +1089,73 @@ ApplicationWindow {
                                 ColumnLayout {
                                     Layout.fillWidth: true
                                     spacing: 6
-                                    Text { text: "Split mode"; color: textMuted; font.family: bodyFont; font.pixelSize: 13 }
+                                    Text { text: "UV detection"; color: textMuted; font.family: bodyFont; font.pixelSize: 13 }
                                     MonoComboBox {
                                         Layout.fillWidth: true
-                                        model: ["components", "auto", "bbox"]
-                                        currentIndex: model.indexOf(pipelineController.splitMode)
-                                        onActivated: pipelineController.splitMode = currentText
+                                        model: configurationPanel.splitModeOptions.map(function(option) { return option.label })
+                                        currentIndex: configurationPanel.splitModeOptions.findIndex(function(option) { return option.value === pipelineController.splitMode })
+                                        onActivated: pipelineController.splitMode = configurationPanel.splitModeOptions[currentIndex].value
+                                    }
+                                }
+                            }
+
+                            Text {
+                                Layout.fillWidth: true
+                                text: "Use All components to match the Python UV pass and extract every disconnected alpha island before similarity comparison."
+                                color: textFaint
+                                font.family: bodyFont
+                                font.pixelSize: 12
+                                wrapMode: Text.Wrap
+                            }
+
+                            Text {
+                                Layout.fillWidth: true
+                                text: "Below review threshold: no merge. Between review and auto-merge: send to review. Above auto-merge: merge automatically."
+                                color: textFaint
+                                font.family: bodyFont
+                                font.pixelSize: 12
+                                wrapMode: Text.Wrap
+                            }
+
+                            RowLayout {
+                                Layout.fillWidth: true
+                                spacing: 10
+
+                                ColumnLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 6
+
+                                    Text { text: "Review threshold (%)"; color: textMuted; font.family: bodyFont; font.pixelSize: 13 }
+                                    MonoField {
+                                        Layout.fillWidth: true
+                                        text: (pipelineController.similarityReviewMinScore * 100).toFixed(1)
+                                        validator: DoubleValidator { bottom: 0; top: 100; decimals: 2; notation: DoubleValidator.StandardNotation }
+                                        onEditingFinished: {
+                                            const nextValue = parseFloat(text)
+                                            if (!isNaN(nextValue)) {
+                                                pipelineController.similarityReviewMinScore = nextValue / 100.0
+                                            }
+                                            text = (pipelineController.similarityReviewMinScore * 100).toFixed(1)
+                                        }
+                                    }
+                                }
+
+                                ColumnLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 6
+
+                                    Text { text: "Auto-merge threshold (%)"; color: textMuted; font.family: bodyFont; font.pixelSize: 13 }
+                                    MonoField {
+                                        Layout.fillWidth: true
+                                        text: (pipelineController.similarityAutoMinScore * 100).toFixed(1)
+                                        validator: DoubleValidator { bottom: 0; top: 100; decimals: 2; notation: DoubleValidator.StandardNotation }
+                                        onEditingFinished: {
+                                            const nextValue = parseFloat(text)
+                                            if (!isNaN(nextValue)) {
+                                                pipelineController.similarityAutoMinScore = nextValue / 100.0
+                                            }
+                                            text = (pipelineController.similarityAutoMinScore * 100).toFixed(1)
+                                        }
                                     }
                                 }
                             }

@@ -16,6 +16,8 @@ class FixturePipelineController final : public QObject {
   Q_PROPERTY(QString toolPath READ toolPath WRITE setToolPath NOTIFY toolPathChanged)
   Q_PROPERTY(QString config READ config WRITE setConfig NOTIFY configChanged)
   Q_PROPERTY(QString splitMode READ splitMode WRITE setSplitMode NOTIFY splitModeChanged)
+  Q_PROPERTY(double similarityReviewMinScore READ similarityReviewMinScore WRITE setSimilarityReviewMinScore NOTIFY similarityReviewMinScoreChanged)
+  Q_PROPERTY(double similarityAutoMinScore READ similarityAutoMinScore WRITE setSimilarityAutoMinScore NOTIFY similarityAutoMinScoreChanged)
   Q_PROPERTY(int similarityMaxPairs READ similarityMaxPairs WRITE setSimilarityMaxPairs NOTIFY similarityMaxPairsChanged)
   Q_PROPERTY(QString assetStoreDirectory READ assetStoreDirectory NOTIFY workspacePathsChanged)
   Q_PROPERTY(QString logicalStoreDirectory READ logicalStoreDirectory NOTIFY workspacePathsChanged)
@@ -39,6 +41,8 @@ public:
   QString toolPath() const;
   QString config() const;
   QString splitMode() const;
+  double similarityReviewMinScore() const;
+  double similarityAutoMinScore() const;
   int similarityMaxPairs() const;
 
   QString assetStoreDirectory() const;
@@ -63,6 +67,8 @@ public:
   void setToolPath(const QString& toolPath);
   void setConfig(const QString& config);
   void setSplitMode(const QString& splitMode);
+  void setSimilarityReviewMinScore(double similarityReviewMinScore);
+  void setSimilarityAutoMinScore(double similarityAutoMinScore);
   void setSimilarityMaxPairs(int similarityMaxPairs);
   void setDecisionNotes(const QString& decisionNotes);
 
@@ -80,6 +86,8 @@ signals:
   void toolPathChanged();
   void configChanged();
   void splitModeChanged();
+  void similarityReviewMinScoreChanged();
+  void similarityAutoMinScoreChanged();
   void similarityMaxPairsChanged();
   void workspacePathsChanged();
   void statusChanged();
@@ -109,6 +117,8 @@ private:
   QString m_toolPath;
   QString m_config;
   QString m_splitMode;
+  double m_similarityReviewMinScore = 0.90;
+  double m_similarityAutoMinScore = 0.92;
   int m_similarityMaxPairs = 20000;
   QString m_status;
   QString m_logText;

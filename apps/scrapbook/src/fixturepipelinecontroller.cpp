@@ -65,6 +65,15 @@ FixturePipelineController::FixturePipelineController(QObject* parent)
   m_toolPath = normalizePath(m_settings.value(QStringLiteral("toolPath")).toString());
   m_config = m_settings.value(QStringLiteral("config"), QStringLiteral("Debug")).toString();
   m_splitMode = m_settings.value(QStringLiteral("splitMode"), QStringLiteral("components")).toString();
+  const bool splitModeMigratedToComponents =
+      m_settings.value(QStringLiteral("splitModeMigratedToComponents"), false).toBool();
+  if (!splitModeMigratedToComponents && m_splitMode == QStringLiteral("auto")) {
+    m_splitMode = QStringLiteral("components");
+    m_settings.setValue(QStringLiteral("splitMode"), m_splitMode);
+  }
+  m_settings.setValue(QStringLiteral("splitModeMigratedToComponents"), true);
+  m_similarityReviewMinScore = m_settings.value(QStringLiteral("similarityReviewMinScore"), 0.90).toDouble();
+  m_similarityAutoMinScore = m_settings.value(QStringLiteral("similarityAutoMinScore"), 0.92).toDouble();
   m_similarityMaxPairs = m_settings.value(QStringLiteral("similarityMaxPairs"), 20000).toInt();
   m_status = QStringLiteral("Idle");
   m_currentGroupTitle = QStringLiteral("No unresolved review groups.");
@@ -111,6 +120,14 @@ QString FixturePipelineController::config() const {
 
 QString FixturePipelineController::splitMode() const {
   return m_splitMode;
+}
+
+double FixturePipelineController::similarityReviewMinScore() const {
+  return m_similarityReviewMinScore;
+}
+
+double FixturePipelineController::similarityAutoMinScore() const {
+  return m_similarityAutoMinScore;
 }
 
 int FixturePipelineController::similarityMaxPairs() const {
@@ -218,6 +235,24 @@ void FixturePipelineController::setSplitMode(const QString& splitMode) {
   emit splitModeChanged();
 }
 
+void FixturePipelineController::setSimilarityReviewMinScore(double similarityReviewMinScore) {
+  if (similarityReviewMinScore < 0.0 || similarityReviewMinScore > 1.0 || m_similarityReviewMinScore == similarityReviewMinScore) {
+    return;
+  }
+  m_similarityReviewMinScore = similarityReviewMinScore;
+  saveSetting(QStringLiteral("similarityReviewMinScore"), similarityReviewMinScore);
+  emit similarityReviewMinScoreChanged();
+}
+
+void FixturePipelineController::setSimilarityAutoMinScore(double similarityAutoMinScore) {
+  if (similarityAutoMinScore < 0.0 || similarityAutoMinScore > 1.0 || m_similarityAutoMinScore == similarityAutoMinScore) {
+    return;
+  }
+  m_similarityAutoMinScore = similarityAutoMinScore;
+  saveSetting(QStringLiteral("similarityAutoMinScore"), similarityAutoMinScore);
+  emit similarityAutoMinScoreChanged();
+}
+
 void FixturePipelineController::setSimilarityMaxPairs(int similarityMaxPairs) {
   if (similarityMaxPairs < 1 || m_similarityMaxPairs == similarityMaxPairs) {
     return;
@@ -304,6 +339,12 @@ void FixturePipelineController::runPipeline() {
     return;
   }
 
+  if (m_similarityAutoMinScore < m_similarityReviewMinScore) {
+    appendLog(QStringLiteral("Auto-merge threshold must be greater than or equal to the review threshold."));
+    setStatus(QStringLiteral("Invalid similarity thresholds"));
+    return;
+  }
+
   const QString executable = detectedPipelineExecutable();
   if (executable.isEmpty()) {
     appendLog(QStringLiteral("Could not find scrapbook_pipeline next to the app or in the build tree."));
@@ -324,6 +365,10 @@ void FixturePipelineController::runPipeline() {
       m_config,
       QStringLiteral("--split-mode"),
       m_splitMode,
+      QStringLiteral("--similarity-review-min-score"),
+      QString::number(m_similarityReviewMinScore, 'f', 4),
+      QStringLiteral("--similarity-auto-min-score"),
+      QString::number(m_similarityAutoMinScore, 'f', 4),
       QStringLiteral("--similarity-report-max-pairs"),
       QString::number(m_similarityMaxPairs),
   };
